@@ -4,7 +4,7 @@ use http::Uri;
 use httparse::Request;
 use tokio::net::TcpStream;
 
-use self::get::handle_get;
+use self::{get::handle_get, head::handle_head};
 
 pub async fn handle_request<'headers, 'buffer>(
     req: &Request<'headers, 'buffer>,
@@ -13,6 +13,7 @@ pub async fn handle_request<'headers, 'buffer>(
     let uri = Uri::from_str(req.path.unwrap()).unwrap_or(Uri::default());
     match req.method.unwrap() {
         "GET" => handle_get(uri, tcp_stream).await,
+        "HEAD" => handle_head(tcp_stream).await,
         _ => Err(format!("Unsupported method {}", req.method.unwrap())),
     }
 }
@@ -27,7 +28,7 @@ mod get {
     };
 
     use crate::stream_utils::{
-        generate_http_date_header, write_buffered_read_to_stream, write_bytes_to_stream,
+        serialize_header, write_buffered_read_to_stream, write_bytes_to_stream,
     };
 
     pub enum GetBody {
@@ -109,26 +110,23 @@ mod get {
             GetBody::File(f) => write_buffered_read_to_stream(tcp_stream, f).await,
         }
     }
+}
 
-    fn serialize_header(resp: &Response<GetBody>) -> Vec<u8> {
-        let mut result: Vec<u8> = Vec::new();
-        let carriage_return = b"\r\n";
+mod head {
+    use http::{Response, StatusCode};
+    use tokio::net::TcpStream;
 
-        result.extend_from_slice(b"HTTP/1.1 ");
-        result.extend_from_slice(resp.status().to_string().as_bytes());
-        result.extend_from_slice(carriage_return);
-        result.extend_from_slice(b"Server: feather\r\n");
-        result.extend(generate_http_date_header());
+    use crate::stream_utils::{serialize_header, write_bytes_to_stream};
 
-        for (name, value) in resp.headers() {
-            result.extend_from_slice(name.as_str().as_bytes());
-            result.extend_from_slice(b": ");
-            result.extend_from_slice(value.as_bytes());
-            result.extend_from_slice(carriage_return);
-        }
+    pub async fn handle_head(tcp_stream: &mut TcpStream) -> Result<(), String> {
+        let resp = Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Length", 0)
+            .body(())
+            .unwrap();
 
-        result.extend_from_slice(carriage_return);
-
-        result
+        let content = serialize_header(&resp);
+        write_bytes_to_stream(tcp_stream, &content).await?;
+        Ok(())
     }
 }

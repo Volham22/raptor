@@ -1,5 +1,6 @@
 use bytes::BytesMut;
 use chrono::{self, Datelike, Timelike};
+use http::Response;
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -71,4 +72,26 @@ pub fn generate_http_date_header() -> Vec<u8> {
     )
     .as_bytes()
     .to_vec()
+}
+
+pub fn serialize_header<T>(resp: &Response<T>) -> Vec<u8> {
+    let mut result: Vec<u8> = Vec::new();
+    let carriage_return = b"\r\n";
+
+    result.extend_from_slice(b"HTTP/1.1 ");
+    result.extend_from_slice(resp.status().to_string().as_bytes());
+    result.extend_from_slice(carriage_return);
+    result.extend_from_slice(b"Server: feather\r\n");
+    result.extend(generate_http_date_header());
+
+    for (name, value) in resp.headers() {
+        result.extend_from_slice(name.as_str().as_bytes());
+        result.extend_from_slice(b": ");
+        result.extend_from_slice(value.as_bytes());
+        result.extend_from_slice(carriage_return);
+    }
+
+    result.extend_from_slice(carriage_return);
+
+    result
 }
