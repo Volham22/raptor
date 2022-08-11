@@ -5,6 +5,8 @@ use tokio::net::TcpListener;
 use crate::connection::Connection;
 
 mod connection;
+mod handlers;
+mod stream_utils;
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

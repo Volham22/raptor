@@ -9,3 +9,6 @@ edition = "2021"
 tokio = { version = "1", features = ["full"] }
 httparse = "1.7.1"
 bytes = "1.2.1"
+http = "0.2"
+serde_json = "1.0"
+chrono = "0.4.21"

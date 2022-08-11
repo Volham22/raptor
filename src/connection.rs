@@ -2,6 +2,8 @@ use bytes::BytesMut;
 use httparse::Request;
 use tokio::{io::AsyncReadExt, net::TcpStream};
 
+use crate::handlers::handle_request;
+
 pub struct Connection {
     stream: TcpStream,
     header_end_index: usize,
@@ -24,7 +26,7 @@ impl Connection {
                 break;
             }
 
-            let mut header = [httparse::EMPTY_HEADER; 10];
+            let mut header = [httparse::EMPTY_HEADER; 100];
             let mut req = Request::new(&mut header);
 
             match req.parse(&self.buffer) {
@@ -33,12 +35,16 @@ impl Connection {
                         self.header_end_index = res.unwrap();
                         if self.is_payload_complete(&req) {
                             println!("Received: {:?}", req);
+                            if let Err(msg) = handle_request(&req, &mut self.stream).await {
+                                println!("ERROR: {}", msg);
+                                break;
+                            }
                             break;
                         }
                     }
                 }
                 Err(msg) => {
-                    eprint!("Error while parsing request: {}", msg);
+                    eprintln!("Error while parsing request: {}", msg);
                     break;
                 }
             }
