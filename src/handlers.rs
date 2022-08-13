@@ -51,7 +51,7 @@ mod get {
         let mut response = match metadata {
             Ok(result) => {
                 if result.is_file() {
-                    println!("File: {}", ".".to_owned() + uri.path());
+                    // println!("File: {}", ".".to_owned() + uri.path());
                     let f = File::open(".".to_owned() + uri.path()).await.unwrap();
 
                     Response::builder()
