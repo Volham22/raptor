@@ -26,7 +26,12 @@ impl VhostManager {
 
     pub async fn init_listeners(&'static self) -> ListenerError {
         for vhost in self.vhosts.values() {
-            let addr_str = format!("{}:{}", vhost.ip, vhost.port);
+            let addr_str = if vhost.is_ipv6 {
+                format!("[{}]:{}", vhost.ip, vhost.port)
+            } else {
+                format!("{}:{}", vhost.ip, vhost.port)
+            };
+
             let addr = SocketAddr::from_str(&addr_str).unwrap();
             let listener = TcpListener::bind(&addr).await?;
             println!("Listenning on {} for {}", addr_str, vhost.name);
