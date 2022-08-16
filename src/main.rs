@@ -1,22 +1,20 @@
-use std::{
-    net::SocketAddr,
-    process::{self, ExitCode},
-};
+use std::process;
 
-use tokio::net::TcpListener;
+use vhosts::ListenerError;
 
 use crate::{
     config::{error::ConfigError, Config},
-    connection::Connection,
+    vhosts::VhostManager,
 };
 
 mod config;
 mod connection;
 mod handlers;
 mod stream_utils;
+mod vhosts;
 
 #[tokio::main]
-pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn main() -> ListenerError {
     let config: Config = match Config::from_file::<ConfigError>("config.json").await {
         Ok(c) => c,
         Err(msg) => {
@@ -24,19 +22,12 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             process::exit(1);
         }
     };
-
     println!("{:?}", config);
+    let manager = Box::new(VhostManager::from_config(config));
 
-    let addr: SocketAddr = ([127, 0, 0, 1], 3000).into();
+    // We can leak the vhost manager since, this the manager has to live during
+    // the whole program runtime. Only one vhost manager is instantiated.
+    Box::leak(manager).init_listeners().await?;
 
-    let listener = TcpListener::bind(addr).await?;
-    println!("Listening on http://{}", addr);
-    loop {
-        let (stream, _) = listener.accept().await?;
-
-        tokio::task::spawn(async move {
-            let mut conn = Connection::new(stream);
-            conn.read_request().await;
-        });
-    }
+    loop {}
 }

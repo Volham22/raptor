@@ -9,10 +9,11 @@ use self::{get::handle_get, head::handle_head};
 pub async fn handle_request<'headers, 'buffer>(
     req: &Request<'headers, 'buffer>,
     tcp_stream: &mut TcpStream,
+    server_root: &str,
 ) -> Result<(), String> {
     let uri = Uri::from_str(req.path.unwrap()).unwrap_or(Uri::default());
     match req.method.unwrap() {
-        "GET" => handle_get(uri, tcp_stream).await,
+        "GET" => handle_get(uri, tcp_stream, server_root).await,
         "HEAD" => handle_head(tcp_stream).await,
         _ => Err(format!("Unsupported method {}", req.method.unwrap())),
     }
@@ -45,14 +46,20 @@ mod get {
         }
     }
 
-    pub async fn handle_get(uri: Uri, tcp_stream: &mut TcpStream) -> Result<(), String> {
-        let metadata = metadata(".".to_owned() + uri.path()).await;
+    pub async fn handle_get(
+        uri: Uri,
+        tcp_stream: &mut TcpStream,
+        server_root: &str,
+    ) -> Result<(), String> {
+        let metadata = metadata(server_root.to_owned() + uri.path()).await;
 
         let mut response = match metadata {
             Ok(result) => {
                 if result.is_file() {
                     // println!("File: {}", ".".to_owned() + uri.path());
-                    let f = File::open(".".to_owned() + uri.path()).await.unwrap();
+                    let f = File::open(server_root.to_owned() + uri.path())
+                        .await
+                        .unwrap();
 
                     Response::builder()
                         .status(StatusCode::OK)

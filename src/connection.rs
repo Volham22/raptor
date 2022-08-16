@@ -8,14 +8,16 @@ pub struct Connection {
     stream: TcpStream,
     header_end_index: usize,
     buffer: BytesMut,
+    server_root: String,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(stream: TcpStream, server_root: &str) -> Self {
         Self {
             stream,
             header_end_index: 0,
             buffer: BytesMut::new(),
+            server_root: server_root.to_string(),
         }
     }
 
@@ -35,7 +37,9 @@ impl Connection {
                         self.header_end_index = res.unwrap();
                         if self.is_payload_complete(&req) {
                             println!("Received: {:?}", req);
-                            if let Err(msg) = handle_request(&req, &mut self.stream).await {
+                            if let Err(msg) =
+                                handle_request(&req, &mut self.stream, &self.server_root).await
+                            {
                                 println!("ERROR: {}", msg);
                                 break;
                             }

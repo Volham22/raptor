@@ -3,7 +3,7 @@ use tokio::fs;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    vhosts: Vec<Vhost>,
+    pub vhosts: Vec<Vhost>,
 }
 
 impl Config {
@@ -18,9 +18,11 @@ impl Config {
 
 #[derive(Deserialize, Debug)]
 pub struct Vhost {
-    ip: String,
-    port: u16,
-    is_ipv6: bool,
+    pub name: String,
+    pub ip: String,
+    pub root_dir: String,
+    pub port: u16,
+    pub is_ipv6: bool,
 }
 
 pub mod error {
