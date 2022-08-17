@@ -2,26 +2,24 @@ use bytes::BytesMut;
 use httparse::Request;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
-use crate::handlers::handle_request;
+use crate::{config::Vhost, handlers::handle_request};
 
 pub struct Connection<T: AsyncRead + AsyncWrite + std::marker::Unpin> {
     stream: T,
     header_end_index: usize,
     buffer: BytesMut,
-    server_root: String,
 }
 
 impl<T: AsyncRead + AsyncWrite + std::marker::Unpin> Connection<T> {
-    pub fn new(stream: T, server_root: &str) -> Self {
+    pub fn new(stream: T) -> Self {
         Self {
             stream,
             header_end_index: 0,
             buffer: BytesMut::new(),
-            server_root: server_root.to_string(),
         }
     }
 
-    pub async fn read_request(&mut self) {
+    pub async fn read_request(&mut self, vhost_lists: &[Vhost]) {
         loop {
             let received_bytes_count = self.stream.read_buf(&mut self.buffer).await.unwrap();
             if received_bytes_count == 0 {
@@ -38,7 +36,7 @@ impl<T: AsyncRead + AsyncWrite + std::marker::Unpin> Connection<T> {
                         if self.is_payload_complete(&req) {
                             println!("Received: {:?}", req);
                             if let Err(msg) =
-                                handle_request(&req, &mut self.stream, &self.server_root).await
+                                handle_request(&req, &mut self.stream, vhost_lists).await
                             {
                                 println!("ERROR: {}", msg);
                                 break;

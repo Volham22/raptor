@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     fs::File,
     io::{self, BufReader},
     net::SocketAddr,
@@ -21,43 +21,46 @@ use crate::{
 };
 
 pub struct VhostManager {
-    vhosts: HashMap<String, Vhost>,
+    vhosts: Vec<Vhost>,
 }
 
 pub type ListenerError = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 impl VhostManager {
     pub fn from_config(config: Config) -> Self {
-        let mut map = HashMap::new();
-
-        for vhost in config.vhosts {
-            map.insert(vhost.name.to_string(), vhost);
+        Self {
+            vhosts: config.vhosts,
         }
-
-        Self { vhosts: map }
     }
 
     pub async fn init_listeners(&'static self) -> ListenerError {
-        for vhost in self.vhosts.values() {
+        let mut init_listeners: HashSet<String> = HashSet::new();
+        for vhost in &self.vhosts {
             let addr_str = if vhost.is_ipv6 {
                 format!("[{}]:{}", vhost.ip, vhost.port)
             } else {
                 format!("{}:{}", vhost.ip, vhost.port)
             };
 
+            if init_listeners.contains(addr_str.as_str()) {
+                continue;
+            }
+
             let addr = SocketAddr::from_str(&addr_str).unwrap();
             if vhost.is_tls() {
-                Self::init_tls_listener(addr, vhost).await?;
+                self.init_tls_listener(addr, vhost).await?;
             } else {
-                Self::init_listener(addr, &vhost.root_dir).await?;
+                self.init_listener(addr).await?;
             }
+
             println!("Listenning on {} for {}", addr_str, &vhost.name);
+            init_listeners.insert(addr_str);
         }
 
         Ok(())
     }
 
-    async fn init_listener(addr: SocketAddr, root_dir: &'static str) -> ListenerError {
+    async fn init_listener(&'static self, addr: SocketAddr) -> ListenerError {
         let listener = TcpListener::bind(&addr).await?;
 
         tokio::spawn(async move {
@@ -71,8 +74,8 @@ impl VhostManager {
                 };
 
                 tokio::spawn(async move {
-                    let mut conn = Connection::new(stream, root_dir);
-                    conn.read_request().await;
+                    let mut conn = Connection::new(stream);
+                    conn.read_request(&self.vhosts).await;
                 });
             }
         });
@@ -80,7 +83,11 @@ impl VhostManager {
         Ok(())
     }
 
-    async fn init_tls_listener(addr: SocketAddr, vhost: &'static Vhost) -> ListenerError {
+    async fn init_tls_listener(
+        &'static self,
+        addr: SocketAddr,
+        vhost: &'static Vhost,
+    ) -> ListenerError {
         let certs = load_certs(&Path::new(&vhost.cert_key.as_ref().unwrap()))?;
         let mut keys = load_keys(&Path::new(&vhost.private_key.as_ref().unwrap()))?;
         let config = rustls::ServerConfig::builder()
@@ -108,8 +115,8 @@ impl VhostManager {
                 };
 
                 tokio::spawn(async move {
-                    let mut conn = Connection::new(stream, &vhost.root_dir);
-                    conn.read_request().await;
+                    let mut conn = Connection::new(stream);
+                    conn.read_request(&self.vhosts).await;
                 });
             }
         });

@@ -1,21 +1,88 @@
 use std::str::FromStr;
 
-use http::Uri;
+use http::{Response, StatusCode, Uri};
 use httparse::Request;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use self::{get::handle_get, head::handle_head};
+use crate::{
+    config::Vhost,
+    stream_utils::{serialize_header, write_buffered_read_to_stream, write_bytes_to_stream},
+};
+
+use self::{
+    get::{handle_get, GetBody},
+    head::handle_head,
+};
 
 pub async fn handle_request<'headers, 'buffer, T: AsyncRead + AsyncWrite + std::marker::Unpin>(
     req: &Request<'headers, 'buffer>,
     tcp_stream: &mut T,
-    server_root: &str,
+    vhosts_list: &[Vhost],
 ) -> Result<(), String> {
     let uri = Uri::from_str(req.path.unwrap()).unwrap_or(Uri::default());
-    match req.method.unwrap() {
-        "GET" => handle_get(uri, tcp_stream, server_root).await,
-        "HEAD" => handle_head(tcp_stream).await,
-        _ => Err(format!("Unsupported method {}", req.method.unwrap())),
+    if let Ok(vhost) = select_vhost(vhosts_list, req) {
+        match req.method.unwrap() {
+            "GET" => handle_get(uri, tcp_stream, &vhost.root_dir).await,
+            "HEAD" => handle_head(tcp_stream).await,
+            _ => Err(format!("Unsupported method {}", req.method.unwrap())),
+        }
+    } else {
+        send_invalid_request(tcp_stream).await
+    }
+}
+
+fn select_vhost<'headers, 'buffer, 'vhosts>(
+    vhosts_list: &'vhosts [Vhost],
+    req: &Request<'headers, 'buffer>,
+) -> Result<&'vhosts Vhost, String> {
+    if let Some(req_host) = req.headers.iter().find(|h| h.name.to_lowercase() == "host") {
+        if let Some(matched_vhost) = vhosts_list.iter().find(|vh| {
+            fnmatch_regex::glob_to_regex(&vh.name)
+                .unwrap()
+                .is_match(req_host.name)
+        }) {
+            Ok(matched_vhost)
+        } else {
+            // If none of the vhosts matched we take the first one from the list that is marked as default vhost
+            // if there's no vhost marked as default in the config file the first vhost is returned.
+            // Note that vhosts are in the same order as they're declared in the config file.
+            if let Some(default_vhost) =
+                vhosts_list.iter().find(|vh| vh.is_default.unwrap_or(false))
+            {
+                Ok(default_vhost)
+            } else {
+                Ok(&vhosts_list[0])
+            }
+        }
+    } else {
+        Err("Invalid request.".to_string())
+    }
+}
+
+async fn send_invalid_request<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
+    tcp_stream: &mut T,
+) -> Result<(), String> {
+    let body_bytes = b"Bad request.";
+    let mut resp = Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .header("Content-length", body_bytes.len())
+        .body(GetBody::Bytes(body_bytes.to_vec()))
+        .unwrap();
+
+    send_response(&mut resp, tcp_stream).await
+}
+
+pub(self) async fn send_response<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
+    resp: &mut Response<GetBody>,
+    tcp_stream: &mut T,
+) -> Result<(), String> {
+    let serialized_header = serialize_header(resp);
+
+    write_bytes_to_stream(tcp_stream, &serialized_header).await?;
+
+    match resp.body_mut() {
+        GetBody::Bytes(b) => write_bytes_to_stream(tcp_stream, b).await,
+        GetBody::File(f) => write_buffered_read_to_stream(tcp_stream, f).await,
     }
 }
 
@@ -28,9 +95,7 @@ mod get {
         io::{AsyncRead, AsyncWrite},
     };
 
-    use crate::stream_utils::{
-        serialize_header, write_buffered_read_to_stream, write_bytes_to_stream,
-    };
+    use super::send_response;
 
     pub enum GetBody {
         File(File),
@@ -97,24 +162,10 @@ mod get {
         };
 
         if response.status() != StatusCode::OK {
-            send_get_response(&mut response, tcp_stream).await?;
+            send_response(&mut response, tcp_stream).await?;
             Err(response.body().try_into_str().unwrap())
         } else {
-            send_get_response(&mut response, tcp_stream).await
-        }
-    }
-
-    async fn send_get_response<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
-        resp: &mut Response<GetBody>,
-        tcp_stream: &mut T,
-    ) -> Result<(), String> {
-        let serialized_header = serialize_header(resp);
-
-        write_bytes_to_stream(tcp_stream, &serialized_header).await?;
-
-        match resp.body_mut() {
-            GetBody::Bytes(b) => write_bytes_to_stream(tcp_stream, b).await,
-            GetBody::File(f) => write_buffered_read_to_stream(tcp_stream, f).await,
+            send_response(&mut response, tcp_stream).await
         }
     }
 }

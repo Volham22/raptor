@@ -25,6 +25,7 @@ pub struct Vhost {
     pub is_ipv6: bool,
     pub private_key: Option<String>,
     pub cert_key: Option<String>,
+    pub is_default: Option<bool>,
 }
 
 impl Vhost {
