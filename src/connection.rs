@@ -1,18 +1,18 @@
 use bytes::BytesMut;
 use httparse::Request;
-use tokio::{io::AsyncReadExt, net::TcpStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
 use crate::handlers::handle_request;
 
-pub struct Connection {
-    stream: TcpStream,
+pub struct Connection<T: AsyncRead + AsyncWrite + std::marker::Unpin> {
+    stream: T,
     header_end_index: usize,
     buffer: BytesMut,
     server_root: String,
 }
 
-impl Connection {
-    pub fn new(stream: TcpStream, server_root: &str) -> Self {
+impl<T: AsyncRead + AsyncWrite + std::marker::Unpin> Connection<T> {
+    pub fn new(stream: T, server_root: &str) -> Self {
         Self {
             stream,
             header_end_index: 0,

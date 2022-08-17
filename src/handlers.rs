@@ -2,13 +2,13 @@ use std::str::FromStr;
 
 use http::Uri;
 use httparse::Request;
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use self::{get::handle_get, head::handle_head};
 
-pub async fn handle_request<'headers, 'buffer>(
+pub async fn handle_request<'headers, 'buffer, T: AsyncRead + AsyncWrite + std::marker::Unpin>(
     req: &Request<'headers, 'buffer>,
-    tcp_stream: &mut TcpStream,
+    tcp_stream: &mut T,
     server_root: &str,
 ) -> Result<(), String> {
     let uri = Uri::from_str(req.path.unwrap()).unwrap_or(Uri::default());
@@ -25,7 +25,7 @@ mod get {
     use http::{Response, StatusCode, Uri};
     use tokio::{
         fs::{metadata, File},
-        net::TcpStream,
+        io::{AsyncRead, AsyncWrite},
     };
 
     use crate::stream_utils::{
@@ -46,9 +46,9 @@ mod get {
         }
     }
 
-    pub async fn handle_get(
+    pub async fn handle_get<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
         uri: Uri,
-        tcp_stream: &mut TcpStream,
+        tcp_stream: &mut T,
         server_root: &str,
     ) -> Result<(), String> {
         let metadata = metadata(server_root.to_owned() + uri.path()).await;
@@ -104,9 +104,9 @@ mod get {
         }
     }
 
-    async fn send_get_response(
+    async fn send_get_response<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
         resp: &mut Response<GetBody>,
-        tcp_stream: &mut TcpStream,
+        tcp_stream: &mut T,
     ) -> Result<(), String> {
         let serialized_header = serialize_header(resp);
 
@@ -121,11 +121,13 @@ mod get {
 
 mod head {
     use http::{Response, StatusCode};
-    use tokio::net::TcpStream;
+    use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::stream_utils::{serialize_header, write_bytes_to_stream};
 
-    pub async fn handle_head(tcp_stream: &mut TcpStream) -> Result<(), String> {
+    pub async fn handle_head<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
+        tcp_stream: &mut T,
+    ) -> Result<(), String> {
         let resp = Response::builder()
             .status(StatusCode::OK)
             .header("Content-Length", 0)

@@ -23,6 +23,14 @@ pub struct Vhost {
     pub root_dir: String,
     pub port: u16,
     pub is_ipv6: bool,
+    pub private_key: Option<String>,
+    pub cert_key: Option<String>,
+}
+
+impl Vhost {
+    pub fn is_tls(&self) -> bool {
+        self.private_key.is_some() && self.cert_key.is_some()
+    }
 }
 
 pub mod error {

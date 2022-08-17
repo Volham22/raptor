@@ -3,41 +3,29 @@ use chrono::{self, Datelike, Timelike};
 use http::Response;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
 };
 
-pub async fn write_bytes_to_stream(
-    tcp_stream: &mut TcpStream,
+pub async fn write_bytes_to_stream<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
+    tcp_stream: &mut T,
     buffer: &Vec<u8>,
 ) -> Result<(), String> {
-    let mut written_bytes = 0usize;
-
-    loop {
-        match tcp_stream.write(&buffer).await {
-            Ok(bytes) => {
-                written_bytes += bytes;
-
-                if written_bytes >= buffer.len() {
-                    break;
-                }
-            }
-            Err(msg) => {
-                return Err(msg.to_string());
-            }
+    match tcp_stream.write_all(&buffer).await {
+        Ok(()) => {}
+        Err(msg) => {
+            return Err(msg.to_string());
         }
     }
 
     Ok(())
 }
 
-pub async fn write_buffered_read_to_stream(
-    tcp_stream: &mut TcpStream,
+pub async fn write_buffered_read_to_stream<T: AsyncRead + AsyncWrite + std::marker::Unpin>(
+    tcp_stream: &mut T,
     file: &mut File,
 ) -> Result<(), String> {
-    let mut buffer = BytesMut::with_capacity(1024usize);
-
     loop {
+        let mut buffer = BytesMut::with_capacity(1024usize);
         match file.read_buf(&mut buffer).await {
             Err(msg) => return Err(msg.to_string()),
             Ok(count) => {
