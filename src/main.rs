@@ -20,6 +20,9 @@ mod vhosts;
 struct Cli {
     /// Config file for the server in json
     config_file: String,
+    /// Validate the config file. Return 0 if the config file is valid.
+    #[clap(short, long)]
+    validate: bool,
 }
 
 #[tokio::main]
@@ -33,12 +36,16 @@ pub async fn main() -> ListenerError {
         }
     };
 
-    println!("{:?}", config);
-    let manager = Box::new(VhostManager::from_config(config));
+    if cli.validate {
+        Ok(())
+    } else {
+        println!("{:?}", config);
+        let manager = Box::new(VhostManager::from_config(config));
 
-    // We can leak the vhost manager since, this the manager has to live during
-    // the whole program runtime. Only one vhost manager is instantiated.
-    Box::leak(manager).init_listeners().await?;
+        // We can leak the vhost manager since, this the manager has to live during
+        // the whole program runtime. Only one vhost manager is instantiated.
+        Box::leak(manager).init_listeners().await?;
 
-    loop {}
+        loop {}
+    }
 }
