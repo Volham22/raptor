@@ -87,7 +87,8 @@ Here is an example to create a vhost listening on port `8080` for `localhost`.
             "name": "[::1]:8080",
             "ip": "::1",
             "port": 8080,
-            "root_dir": "."
+            "root_dir": ".",
+            "is_ipv6": true
         }
     ]
 }
