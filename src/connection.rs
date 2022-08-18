@@ -19,7 +19,7 @@ impl<T: AsyncRead + AsyncWrite + std::marker::Unpin> Connection<T> {
         }
     }
 
-    pub async fn read_request(&mut self, vhost_lists: &[Vhost]) {
+    pub async fn read_requests(&mut self, vhost_lists: &[Vhost]) {
         loop {
             let received_bytes_count = self.stream.read_buf(&mut self.buffer).await.unwrap();
             if received_bytes_count == 0 {
@@ -35,19 +35,30 @@ impl<T: AsyncRead + AsyncWrite + std::marker::Unpin> Connection<T> {
                         self.header_end_index = res.unwrap();
                         if self.is_payload_complete(&req) {
                             println!("Received: {:?}", req);
-                            if let Err(msg) =
-                                handle_request(&req, &mut self.stream, vhost_lists).await
-                            {
-                                println!("ERROR: {}", msg);
-                                break;
+                            match handle_request(&req, &mut self.stream, vhost_lists).await {
+                                Ok(keep) => {
+                                    if keep {
+                                        println!("Keep connection alive.");
+                                        self.buffer.clear();
+                                        continue;
+                                    } else {
+                                        println!("closed connection.");
+                                        break;
+                                    }
+                                }
+                                Err(msg) => {
+                                    println!("ERROR: {}", msg);
+                                    break;
+                                }
                             }
-                            break;
                         }
                     }
                 }
                 Err(msg) => {
-                    eprintln!("Error while parsing request: {}", msg);
-                    break;
+                    eprintln!(
+                        "Error while parsing request: {}\tTrying again with more bytes",
+                        msg
+                    );
                 }
             }
         }

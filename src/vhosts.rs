@@ -75,7 +75,7 @@ impl VhostManager {
 
                 tokio::spawn(async move {
                     let mut conn = Connection::new(stream);
-                    conn.read_request(&self.vhosts).await;
+                    conn.read_requests(&self.vhosts).await;
                 });
             }
         });
@@ -116,7 +116,7 @@ impl VhostManager {
 
                 tokio::spawn(async move {
                     let mut conn = Connection::new(stream);
-                    conn.read_request(&self.vhosts).await;
+                    conn.read_requests(&self.vhosts).await;
                 });
             }
         });

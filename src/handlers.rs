@@ -14,21 +14,30 @@ use self::{
     head::handle_head,
 };
 
+/// Handle the http request and return if the connection should be kept with the client (http header 'Connection')
 pub async fn handle_request<'headers, 'buffer, T: AsyncRead + AsyncWrite + std::marker::Unpin>(
     req: &Request<'headers, 'buffer>,
     tcp_stream: &mut T,
     vhosts_list: &[Vhost],
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let uri = Uri::from_str(req.path.unwrap()).unwrap_or(Uri::default());
     if let Ok(vhost) = select_vhost(vhosts_list, req) {
         match req.method.unwrap() {
-            "GET" => handle_get(uri, tcp_stream, &vhost.root_dir).await,
-            "HEAD" => handle_head(tcp_stream).await,
-            _ => Err(format!("Unsupported method {}", req.method.unwrap())),
-        }
+            "GET" => handle_get(uri, tcp_stream, &vhost.root_dir).await?,
+            "HEAD" => handle_head(tcp_stream).await?,
+            _ => return Err(format!("Unsupported method {}", req.method.unwrap())),
+        };
     } else {
-        send_invalid_request(tcp_stream).await
+        send_invalid_request(tcp_stream).await?;
     }
+
+    Ok(should_keep_connection(req))
+}
+
+fn should_keep_connection<'headers, 'buffer>(req: &Request<'headers, 'buffer>) -> bool {
+    req.headers
+        .iter()
+        .any(|h| h.name.to_lowercase() == "connection" && h.value == b"keep-alive")
 }
 
 fn select_vhost<'headers, 'buffer, 'vhosts>(
