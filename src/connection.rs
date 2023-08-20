@@ -115,9 +115,17 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             }
             FrameType::GoAway => {
                 info!("Go away received: {:?}", frame);
+
+                if frame.stream_identifier == 0 && frame.flags == 0 {
+                    info!("Gracefully closing the connection");
+                    break;
+                }
             }
             FrameType::Priority => {
                 info!("Priority received: {:?}", frame);
+            }
+            FrameType::ResetStream => {
+                info!("Reset stream received: {frame:?}");
             }
             _ => continue,
         }
@@ -128,4 +136,6 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             let _ = stream.read_buf(&mut buffer).await?;
         }
     }
+
+    Ok(())
 }
