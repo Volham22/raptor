@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use bytes::Bytes;
 
-pub type HeaderTuple = (Bytes, Bytes);
+use crate::request::{HttpRequest, RequestError, RequestType};
 
 #[derive(Debug)]
-pub struct Headers(Vec<HeaderTuple>);
+pub struct Headers(HashMap<Bytes, Bytes>);
 
 impl Headers {
     pub fn from_bytes(
@@ -56,5 +58,21 @@ impl Headers {
     #[inline]
     fn is_priority(flags: u8) -> bool {
         flags & 0x20 > 0
+    }
+}
+
+impl HttpRequest for Headers {
+    fn get_type(&self) -> Result<RequestType, RequestError> {
+        match self.0.get(b":method".as_slice()) {
+            Some(kind) => RequestType::try_from(&kind[..]),
+            None => Err(RequestError::MalformedRequest),
+        }
+    }
+
+    fn get_uri(&self) -> Result<&[u8], RequestError> {
+        self.0
+            .get(b":path".as_slice())
+            .map(|v| &v[..])
+            .ok_or(RequestError::MalformedRequest)
     }
 }

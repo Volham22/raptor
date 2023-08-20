@@ -9,7 +9,8 @@ pub fn build_frame_header<T: ResponseSerialize>(
     stream_identifer: u32,
     frame: &T,
 ) {
-    buffer.put(&frame.compute_frame_length().to_be_bytes()[..3]); // length
+    // Slice to 1.. because of network endianness
+    buffer.put(&frame.compute_frame_length().to_be_bytes()[1..]); // length
 
     buffer.put_u8((frame_type as u8).to_be()); // type
     buffer.put_u8(flags.to_be()); // flags

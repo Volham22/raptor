@@ -8,7 +8,7 @@ use std::{
 
 use connection::do_connection;
 use rustls_pemfile::{certs, rsa_private_keys};
-use tokio::{net::TcpListener};
+use tokio::net::TcpListener;
 use tokio_rustls::{
     rustls::{self, Certificate, PrivateKey},
     TlsAcceptor,
@@ -16,6 +16,8 @@ use tokio_rustls::{
 
 mod connection;
 mod http2;
+mod request;
+mod method_handlers;
 
 fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
     let mut cert_buffer = BufReader::new(File::open(path)?);
