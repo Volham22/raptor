@@ -286,12 +286,12 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             }
             FrameType::GoAway => {
                 info!("Go away received: {:?}", frame);
-                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
 
                 if frame.stream_identifier == 0 && frame.flags == 0 {
                     info!("Gracefully closing the connection");
                     break;
                 }
+                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Priority => {
                 info!("Priority received: {:?}", frame);
@@ -305,7 +305,37 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             }
             FrameType::Data => todo!(),
             FrameType::PushPromise => todo!(),
-            FrameType::Ping => todo!(),
+            FrameType::Ping => {
+                let ping =
+                    match frames::Ping::from_bytes(&buffer[FRAME_HEADER_LENGTH..], frame.flags) {
+                        Ok(p) => p,
+                        Err(frames::FrameError::BadFrameSize(0)) => {
+                            trace!("ping frame not fully received. Reading... again");
+                            let _ = stream.read_buf(&mut buffer).await?;
+                            continue;
+                        }
+                        Err(_) => unreachable!(),
+                    };
+
+                if ping.is_ack {
+                    info!("Received ping ack with value: {}", ping.opaque_data);
+                } else {
+                    let ping_ack = frames::Ping::new(true);
+                    let mut buf =
+                        BytesMut::with_capacity(FRAME_HEADER_LENGTH + frames::PING_LENGTH);
+
+                    build_frame_header(
+                        &mut buf,
+                        FrameType::Ping,
+                        frame.stream_identifier,
+                        &ping_ack,
+                        None,
+                    );
+
+                    send_all(&mut stream, buf.as_ref()).await?;
+                    buffer.advance(FRAME_HEADER_LENGTH + frames::PING_LENGTH);
+                }
+            }
         }
     }
 
