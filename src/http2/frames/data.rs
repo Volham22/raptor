@@ -1,5 +1,3 @@
-use bytes::BufMut;
-
 use crate::http2::response::ResponseSerialize;
 
 #[derive(Debug)]

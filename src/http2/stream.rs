@@ -84,7 +84,7 @@ impl StreamManager {
         match self.streams.get(index) {
             Some(s) => Some(s),
             None => {
-                println!("Tried to get an unregistered stream {}", index);
+                tracing::error!("Tried to get an unregistered stream {}", index);
                 None
             }
         }

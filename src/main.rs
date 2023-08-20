@@ -13,11 +13,12 @@ use tokio_rustls::{
     rustls::{self, Certificate, PrivateKey},
     TlsAcceptor,
 };
+use tracing::{debug, info, span, warn, Level};
 
 mod connection;
 mod http2;
-mod request;
 mod method_handlers;
+mod request;
 
 fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
     let mut cert_buffer = BufReader::new(File::open(path)?);
@@ -37,12 +38,19 @@ fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(Level::TRACE)
+        .init();
+    info!("Begin of server");
+
     let addr = "127.0.0.1:8000"
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
+    debug!("Created sockaddr");
     let certs = load_certs(Path::new("cert.pem"))?;
     let mut keys = load_keys(Path::new("private_key.pem"))?;
+    debug!("Loaded certs and private key");
 
     let mut config = rustls::ServerConfig::builder()
         .with_safe_defaults()
@@ -52,18 +60,26 @@ async fn main() -> io::Result<()> {
 
     // Allow http2 for ALPN negociation with the client
     config.alpn_protocols = vec![b"h2".to_vec()];
+    debug!("Supported ALPN protocols: {:?}", config.alpn_protocols);
 
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener_socket = TcpListener::bind(&addr).await?;
+    info!("Start to listen on {:?}", &addr);
 
     loop {
-        let (client_socket, _) = listener_socket.accept().await?;
+        let (client_socket, client_addr) = listener_socket.accept().await?;
         let acceptor = acceptor.clone();
+        info!("New client connection from {client_addr:?}");
 
         tokio::spawn(async move {
-            let fut = async move { do_connection(acceptor, client_socket).await };
+            debug!("Started connection handling for {client_addr:?}");
+            let fut = async move {
+                let span = span!(Level::DEBUG, "Client connection handling");
+                let _ = span.enter();
+                do_connection(acceptor, client_socket).await
+            };
             if let Err(err) = fut.await {
-                eprintln!("future error: {:?}", err);
+                warn!("client connection handler error: {:?}", err);
             }
         });
     }

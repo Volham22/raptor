@@ -3,10 +3,11 @@ use std::io;
 use bytes::{BufMut, BytesMut};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
+use tracing::debug;
 
 use crate::{
     connection::send_all,
-    method_handlers::{handle_get, handle_request},
+    method_handlers::handle_get,
     request::{HttpRequest, RequestType},
 };
 
@@ -46,7 +47,7 @@ pub async fn respond_request(
                     (b"content-type", b"text/plain"),
                     (b"content-length", payload_size.as_bytes()),
                 ]);
-                println!(
+                debug!(
                     "Response headers: {:?} stream: {}",
                     response_headers, stream_identifer
                 );
@@ -73,7 +74,7 @@ pub async fn respond_request(
                     &data_frame,
                     None,
                 );
-                println!("Response data: {:?}", data_frame);
+                debug!("Response data: {:?}", data_frame);
                 send_all(stream, &data_buffer[..]).await
             }
             RequestType::Delete => todo!(),

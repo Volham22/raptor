@@ -1,6 +1,7 @@
 use std::{io, path::Path};
 
 use tokio::fs;
+use tracing::debug;
 
 use crate::request::{HttpRequest, RequestType};
 
@@ -16,7 +17,7 @@ pub async fn handle_request<T: HttpRequest>(req: &T) -> io::Result<Option<Vec<u8
 pub async fn handle_get<T: HttpRequest>(req: &T) -> io::Result<Vec<u8>> {
     let path = format!(".{}", String::from_utf8_lossy(req.get_uri().unwrap()));
     let get_path = Path::new(&path);
-    println!("Path: {:?}", get_path);
+    debug!("Path: {:?}", get_path);
 
     fs::read(get_path).await
 }

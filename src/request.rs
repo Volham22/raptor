@@ -1,4 +1,5 @@
 use thiserror::Error;
+use tracing::error;
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum RequestError<'a> {
@@ -24,7 +25,10 @@ impl<'a> TryFrom<&'a [u8]> for RequestType {
             b"delete" => Ok(Self::Delete),
             b"put" => Ok(Self::Put),
             b"head" => Ok(Self::Head),
-            _ => Err(RequestError::UnsupportedMethod(value)),
+            _ => {
+                error!("Unsupported method: {value:#02x?}");
+                Err(RequestError::UnsupportedMethod(value))
+            }
         }
     }
 }

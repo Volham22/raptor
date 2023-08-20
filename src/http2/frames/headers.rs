@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
+use tracing::{error, trace};
 
 use crate::{
     http2::response::ResponseSerialize,
@@ -57,7 +58,7 @@ impl Headers {
                     .collect(),
             )),
             Err(err) => {
-                eprintln!("HPACK decoder error: {:?}", err);
+                error!("HPACK decoder error: {:?}", err);
                 Err("decoder error")
             }
         }
@@ -86,7 +87,7 @@ impl Headers {
 
 impl HttpRequest for Headers {
     fn get_type(&self) -> Result<RequestType, RequestError> {
-        println!("get type: {:?}", self.0);
+        trace!("get type: {:?}", self.0);
         match self.0.get(b":method".as_slice()) {
             Some(kind) => RequestType::try_from(&kind[..]),
             None => Err(RequestError::MalformedRequest),

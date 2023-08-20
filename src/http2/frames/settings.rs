@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
+use tracing::warn;
 
 use crate::http2::response::ResponseSerialize;
 
@@ -76,7 +77,7 @@ impl Settings {
             if let Ok(sid) = SettingKind::try_from(identifier) {
                 flags.push((sid, setting_value));
             } else {
-                eprintln!("Unknown setting identifier: {}", identifier);
+                warn!("Unknown setting identifier: {}. Ignoring...", identifier);
             }
         }
 
