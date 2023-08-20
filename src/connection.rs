@@ -48,6 +48,8 @@ pub enum ConnectionError {
     ContinuationFrameWithoutHeaderFrame,
     #[error("Settings ACK length is not 0")]
     NonZeroSettingsAckLength,
+    #[error("Settings on non default stream")]
+    SettingsNonDefaultSream,
 }
 
 type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -207,25 +209,21 @@ async fn receive_continuation_frames(
 async fn send_go_away(stream: &mut TlsStream<TcpStream>, err: ConnectionError) -> io::Result<()> {
     error!("Send GoAway frame {:?}", err);
 
-    match err {
+    let error_type = match err {
         ConnectionError::IOError(_) => unreachable!(),
-        _ => {
-            let frame = frames::GoAway::new(
-                frames::ErrorType::ProtocolError,
-                0,
-                b"PROTOCOL ERROR".to_vec(),
-            );
-            let mut buffer = BytesMut::with_capacity(
-                FRAME_HEADER_LENGTH + frame.compute_frame_length(None) as usize,
-            );
+        ConnectionError::NonZeroSettingsAckLength => frames::ErrorType::FrameSizeError,
+        _ => frames::ErrorType::ProtocolError,
+    };
 
-            build_frame_header(&mut buffer, frames::FrameType::GoAway, 0, &frame, None);
-            match send_all(stream, &buffer).await {
-                Ok(()) => Ok(()),
-                Err(ConnectionError::IOError(e)) => Err(e),
-                Err(_) => unreachable!(),
-            }
-        }
+    let frame = frames::GoAway::new(error_type, 0, error_type.to_string().as_bytes().to_vec());
+    let mut buffer =
+        BytesMut::with_capacity(FRAME_HEADER_LENGTH + frame.compute_frame_length(None) as usize);
+
+    build_frame_header(&mut buffer, frames::FrameType::GoAway, 0, &frame, None);
+    match send_all(stream, &buffer).await {
+        Ok(()) => Ok(()),
+        Err(ConnectionError::IOError(e)) => Err(e),
+        Err(_) => unreachable!(),
     }
 }
 
@@ -256,6 +254,11 @@ pub async fn do_connection_loop(
 
         match frame.frame_type {
             FrameType::Settings => {
+                // Settings for a stream other than 0 are not allowed
+                if frame.stream_identifier != 0 {
+                    return Err(ConnectionError::SettingsNonDefaultSream);
+                }
+
                 // Setting ACK, ignore the frame.
                 if frame.flags & 0x01 > 0 {
                     debug!("Client ack settings");
