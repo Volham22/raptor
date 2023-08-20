@@ -6,7 +6,7 @@ use tokio_rustls::server::TlsStream;
 use tracing::{debug, info, trace};
 
 use crate::{
-    connection::send_all,
+    connection::{connection_error_to_io_error, send_all},
     method_handlers::handle_request,
     request::{HttpRequest, RequestType},
 };
@@ -82,7 +82,10 @@ pub async fn respond_request(
                 }
 
                 debug!("Send header frame: {:?}", header_frame);
-                send_all(stream, serialize_buffer.as_ref()).await?;
+                connection_error_to_io_error!(
+                    send_all(stream, serialize_buffer.as_ref()).await,
+                    ()
+                )?;
 
                 // // Send buffer data
                 if let Some(body) = response.body {
@@ -99,7 +102,10 @@ pub async fn respond_request(
                     );
 
                     trace!("Send data frame (len: {})", serialize_buffer.len());
-                    send_all(stream, serialize_buffer.as_ref()).await?;
+                    connection_error_to_io_error!(
+                        send_all(stream, serialize_buffer.as_ref()).await,
+                        ()
+                    )?;
                 }
 
                 http_stream.mark_as_closed();
