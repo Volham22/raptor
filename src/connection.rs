@@ -19,6 +19,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
     let mut stream = ssl_socket.accept(client_socket).await?;
     let _ = stream.read_buf(&mut buffer).await?;
     let preface_offset = check_connection_preface(&buffer).expect("Bad connection preface");
+    let mut decoder = hpack::Decoder::new();
     println!("Connection preface good");
     buffer.advance(preface_offset);
 
@@ -50,6 +51,16 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                     frames::WindowUpdate::from_bytes(&buffer[9..], frame.length as usize)
                         .expect("Failed to parse window update");
                 println!("Window update: {:?}", window_update);
+            }
+            FrameType::Headers => {
+                let headers = frames::Headers::from_bytes(
+                    &buffer[9..],
+                    &mut decoder,
+                    frame.flags,
+                    frame.length as usize,
+                )
+                .expect("Failed to parse headers");
+                println!("Headers: {:?}", headers);
             }
             _ => continue,
         }
