@@ -50,6 +50,8 @@ pub enum ConnectionError {
     NonZeroSettingsAckLength,
     #[error("Settings on non default stream")]
     SettingsNonDefaultSream,
+    #[error("Settings frame length is not a multiple of 6")]
+    SettingsLengthNotMultipleOf6,
 }
 
 type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -211,7 +213,7 @@ async fn send_go_away(stream: &mut TlsStream<TcpStream>, err: ConnectionError) -
 
     let error_type = match err {
         ConnectionError::IOError(_) => unreachable!(),
-        ConnectionError::NonZeroSettingsAckLength => frames::ErrorType::FrameSizeError,
+        ConnectionError::NonZeroSettingsAckLength | ConnectionError::SettingsLengthNotMultipleOf6 => frames::ErrorType::FrameSizeError,
         _ => frames::ErrorType::ProtocolError,
     };
 
@@ -269,6 +271,14 @@ pub async fn do_connection_loop(
                             frame.length
                         );
                         return Err(ConnectionError::NonZeroSettingsAckLength);
+                    }
+
+                    if frame.length % 6 != 0 {
+                        error!(
+                            "Settings length is not a multiple of 6! (size: {})",
+                            frame.length
+                        );
+                        return Err(ConnectionError::SettingsLengthNotMultipleOf6);
                     }
 
                     buffer.advance(FRAME_HEADER_LENGTH); // consume current frame
