@@ -3,7 +3,7 @@ use std::io;
 use bytes::{BufMut, BytesMut};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
-use tracing::debug;
+use tracing::{debug, error, info};
 
 use crate::{
     connection::send_all,
@@ -11,7 +11,10 @@ use crate::{
     request::{HttpRequest, RequestType},
 };
 
-use super::frames::{Data, FrameType, Headers};
+use super::{
+    frames::{Data, FrameType, Headers},
+    stream::{Stream, StreamManager},
+};
 
 pub fn build_frame_header<T: ResponseSerialize>(
     buffer: &mut BytesMut,
@@ -34,13 +37,33 @@ pub fn build_frame_header<T: ResponseSerialize>(
 pub async fn respond_request(
     stream: &mut TlsStream<TcpStream>,
     stream_identifer: u32,
-    headers: &Headers,
+    stream_manager: &mut StreamManager,
     encoder: &mut hpack::Encoder<'_>,
 ) -> io::Result<()> {
+    let headers = stream_manager
+        .get_at(stream_identifer)
+        .unwrap()
+        .get_headers()
+        .unwrap();
+
     match headers.get_type() {
         Ok(kind) => match kind {
             RequestType::Get => {
                 let get_payload = handle_get(headers).await?;
+                let http_stream = stream_manager.get_at_mut(stream_identifer).unwrap();
+
+                if !http_stream.has_room_in_window(get_payload.len() as u32) {
+                    info!(
+                        "Stream {} has not enough room to send response payload",
+                        http_stream.identifier
+                    );
+                    todo!("Handle error");
+                }
+
+                http_stream
+                    .consume_space(get_payload.len() as u32)
+                    .expect("Tried to consume space on a too small window");
+
                 let payload_size = get_payload.len().to_string();
                 let response_headers = Headers::new(&[
                     (b":status", b"200"),
@@ -49,7 +72,7 @@ pub async fn respond_request(
                 ]);
                 debug!(
                     "Response headers: {:?} stream: {}",
-                    response_headers, stream_identifer
+                    response_headers, http_stream.identifier
                 );
 
                 // Send buffer header
@@ -57,7 +80,7 @@ pub async fn respond_request(
                 build_frame_header(
                     &mut buffer,
                     FrameType::Headers,
-                    stream_identifer,
+                    http_stream.identifier,
                     &response_headers,
                     Some(encoder),
                 );
@@ -70,11 +93,13 @@ pub async fn respond_request(
                 build_frame_header(
                     &mut data_buffer,
                     FrameType::Data,
-                    stream_identifer,
+                    http_stream.identifier,
                     &data_frame,
                     None,
                 );
                 debug!("Response data: {:?}", data_frame);
+
+                http_stream.mark_as_closed();
                 send_all(stream, &data_buffer[..]).await
             }
             RequestType::Delete => todo!(),

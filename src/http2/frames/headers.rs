@@ -8,13 +8,17 @@ use crate::{
     request::{HttpRequest, RequestError, RequestType},
 };
 
-#[derive(Debug)]
-pub struct Headers(HashMap<Bytes, Bytes>);
+#[derive(Debug, Clone)]
+pub struct Headers {
+    headers: HashMap<Bytes, Bytes>,
+    end_headers: bool,
+    end_stream: bool,
+}
 
 impl Headers {
     pub fn new(headers: &[(&[u8], &[u8])]) -> Self {
-        Self(
-            headers
+        Self {
+            headers: headers
                 .iter()
                 .map(|(k, v)| {
                     (
@@ -23,7 +27,9 @@ impl Headers {
                     )
                 })
                 .collect(),
-        )
+            end_headers: false,
+            end_stream: false,
+        }
     }
 
     pub fn from_bytes(
@@ -47,8 +53,9 @@ impl Headers {
         let payload_offset = if Self::is_priority(flags) { 5 } else { 0 };
 
         match decoder.decode(&value[payload_offset..length]) {
-            Ok(hds) => Ok(Self(
-                hds.iter()
+            Ok(hds) => Ok(Self {
+                headers: hds
+                    .iter()
                     .map(|(k, v)| {
                         (
                             Bytes::copy_from_slice(k.as_slice()),
@@ -56,7 +63,9 @@ impl Headers {
                         )
                     })
                     .collect(),
-            )),
+                end_headers: Self::is_end_header(flags),
+                end_stream: Self::is_end_stream(flags),
+            }),
             Err(err) => {
                 error!("HPACK decoder error: {:?}", err);
                 Err("decoder error")
@@ -64,10 +73,24 @@ impl Headers {
         }
     }
 
-    // #[inline]
-    // fn is_end_stream(flags: u8) -> bool {
-    //     flags & 0x01 > 0
-    // }
+    pub fn are_header_terminated(&self) -> bool {
+        self.end_headers
+    }
+
+    pub fn should_stream_close(&self) -> bool {
+        self.end_stream
+    }
+
+    pub fn add_headers(&mut self, headers: &[(Bytes, Bytes)]) {
+        for (k, v) in headers {
+            self.headers.insert(k.clone(), v.clone()); // Bytes are cheap to clone
+        }
+    }
+
+    #[inline]
+    fn is_end_stream(flags: u8) -> bool {
+        flags & 0x01 > 0
+    }
 
     #[inline]
     fn is_end_header(flags: u8) -> bool {
@@ -87,15 +110,15 @@ impl Headers {
 
 impl HttpRequest for Headers {
     fn get_type(&self) -> Result<RequestType, RequestError> {
-        trace!("get type: {:?}", self.0);
-        match self.0.get(b":method".as_slice()) {
+        trace!("get type: {:?}", self.headers);
+        match self.headers.get(b":method".as_slice()) {
             Some(kind) => RequestType::try_from(&kind[..]),
             None => Err(RequestError::MalformedRequest),
         }
     }
 
     fn get_uri(&self) -> Result<&[u8], RequestError> {
-        self.0
+        self.headers
             .get(b":path".as_slice())
             .map(|v| &v[..])
             .ok_or(RequestError::MalformedRequest)
@@ -107,10 +130,10 @@ impl ResponseSerialize for Headers {
         encoder
             .unwrap()
             .encode(
-                self.0
+                self.headers
                     .iter()
                     .filter(|(k, _)| k.starts_with(&[b':']))
-                    .chain(self.0.iter().filter(|(k, _)| !k.starts_with(&[b':'])))
+                    .chain(self.headers.iter().filter(|(k, _)| !k.starts_with(&[b':'])))
                     .map(|(k, v)| (&k[..], &v[..]))
                     .collect::<Vec<(&[u8], &[u8])>>(),
             )
@@ -122,7 +145,7 @@ impl ResponseSerialize for Headers {
     fn compute_frame_length(&self, encoder: Option<&mut hpack::Encoder>) -> u32 {
         encoder
             .unwrap()
-            .encode(self.0.iter().map(|(k, v)| (&k[..], &v[..])))
+            .encode(self.headers.iter().map(|(k, v)| (&k[..], &v[..])))
             .len() as u32
     }
 

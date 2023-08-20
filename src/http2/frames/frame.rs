@@ -11,6 +11,10 @@ pub enum FrameError {
     UnknownFrameNumber(u8),
     #[error("HPACK decoder error: '{0:?}'")]
     HpackDecoderError(hpack::decoder::DecoderError),
+    #[error("Continuation frame without header frame")]
+    ContinuationWithoutHeader,
+    #[error("Continuation frame but END_HEADERS set")]
+    ContinuationWithEndHeadersSet,
 }
 
 #[repr(u8)]

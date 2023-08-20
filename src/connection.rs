@@ -6,12 +6,13 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_rustls::{server::TlsStream, TlsAcceptor};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::http2::{
     check_connection_preface,
     frames::{self, Frame, FrameType, Settings, FRAME_HEADER_LENGTH},
     response::{build_frame_header, respond_request, ResponseSerialize},
+    stream::StreamManager,
 };
 
 pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> io::Result<()> {
@@ -44,6 +45,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
     debug!("Connection preface good");
     let mut decoder = hpack::Decoder::new();
     let mut encoder = hpack::Encoder::new();
+    let mut stream_manager = StreamManager::new();
     buffer.advance(preface_offset); // consume connection preface in buffer
     send_server_setting(&mut stream).await?;
 
@@ -96,6 +98,18 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                 )
                 .expect("Failed to parse window update");
                 info!("Window update: {:?}", window_update);
+
+                match stream_manager.get_at_mut(frame.stream_identifier) {
+                    Some(st) => st.update_window(window_update.0),
+                    None => {
+                        trace!("Update window received on an unregistered stream. Registering it");
+                        stream_manager.register_new_stream(frame.stream_identifier);
+                        stream_manager
+                            .get_at_mut(frame.stream_identifier)
+                            .unwrap()
+                            .update_window(window_update.0);
+                    }
+                }
             }
             FrameType::Headers => {
                 let headers = if let Ok(h) = frames::Headers::from_bytes(
@@ -110,8 +124,16 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                     continue;
                 };
                 info!("Headers: {:?}", headers);
-                respond_request(&mut stream, frame.stream_identifier, &headers, &mut encoder)
-                    .await?;
+                if !stream_manager.has_stream(frame.stream_identifier) {
+                    stream_manager.register_new_stream(frame.stream_identifier);
+                }
+
+                stream_manager
+                    .get_at_mut(frame.stream_identifier)
+                    .unwrap()
+                    .set_headers(headers);
+
+                respond_request(&mut stream, frame.stream_identifier, &mut stream_manager, &mut encoder).await?;
             }
             FrameType::GoAway => {
                 info!("Go away received: {:?}", frame);
@@ -133,6 +155,19 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                 )
                 .expect("Failed to parse continuation_frame");
                 info!("Continuation frame received: {continuation_frame:?}");
+
+                match stream_manager.get_at_mut(frame.stream_identifier) {
+                    Some(st) => {
+                        if let Err(err) = st.add_contination_frame(&continuation_frame) {
+                            error!("Error while registering continuation frame: {err:?}");
+                            todo!("Handle error");
+                        }
+                    }
+                    None => {
+                        error!("No stream associated to the continuation frame: {continuation_frame:?}");
+                        todo!("Handle error");
+                    }
+                }
             }
             FrameType::ResetStream => {
                 info!("Reset stream received: {frame:?}");

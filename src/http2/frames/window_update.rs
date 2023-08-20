@@ -1,5 +1,5 @@
 #[derive(Debug)]
-pub struct WindowUpdate(u32);
+pub struct WindowUpdate(pub u32);
 
 impl WindowUpdate {
     pub fn from_bytes(value: &[u8], length: usize) -> Result<Self, &'static str> {
