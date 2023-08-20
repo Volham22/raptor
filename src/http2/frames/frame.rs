@@ -1,4 +1,3 @@
-use bytes::BytesMut;
 use thiserror::Error;
 
 pub const FRAME_HEADER_LENGTH: usize = 9;
@@ -11,10 +10,10 @@ pub enum FrameError {
     UnknownFrameNumber(u8),
     #[error("HPACK decoder error: '{0:?}'")]
     HpackDecoderError(hpack::decoder::DecoderError),
-    #[error("Continuation frame without header frame")]
-    ContinuationWithoutHeader,
-    #[error("Continuation frame but END_HEADERS set")]
-    ContinuationWithEndHeadersSet,
+    // #[error("Continuation frame without header frame")]
+    // ContinuationWithoutHeader,
+    // #[error("Continuation frame but END_HEADERS set")]
+    // ContinuationWithEndHeadersSet,
 }
 
 #[repr(u8)]
@@ -60,10 +59,10 @@ pub struct Frame {
     pub stream_identifier: u32,
 }
 
-impl TryFrom<&BytesMut> for Frame {
+impl TryFrom<&[u8]> for Frame {
     type Error = FrameError;
 
-    fn try_from(bytes: &BytesMut) -> Result<Self, Self::Error> {
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         if bytes.len() < FRAME_HEADER_LENGTH {
             return Err(FrameError::BadFrameSize);
         }

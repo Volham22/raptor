@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use tracing::{error, trace};
 
 use crate::{
@@ -8,10 +8,11 @@ use crate::{
     request::{HttpRequest, RequestError, RequestType},
 };
 
+use super::FrameError;
+
 #[derive(Debug, Clone)]
 pub struct Headers {
     headers: HashMap<Bytes, Bytes>,
-    end_headers: bool,
     end_stream: bool,
 }
 
@@ -27,9 +28,28 @@ impl Headers {
                     )
                 })
                 .collect(),
-            end_headers: false,
             end_stream: false,
         }
+    }
+
+    pub fn extract_headers_data(
+        value: &[u8],
+        flags: u8,
+        length: usize,
+    ) -> Result<BytesMut, FrameError> {
+        trace!("extracting header data");
+        if length > value.len() {
+            return Err(FrameError::BadFrameSize);
+        }
+
+        if Self::is_padded(flags) {
+            todo!("Padding and priority stream are not implemented");
+        }
+
+        let mut result = BytesMut::with_capacity(length);
+        result.put(&value[..length]);
+
+        Ok(result)
     }
 
     pub fn from_bytes(
@@ -37,21 +57,17 @@ impl Headers {
         decoder: &mut hpack::Decoder,
         flags: u8,
         length: usize,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, FrameError> {
+        trace!("Decoding header frame");
         if length > value.len() {
-            return Err("Not enought bytes!");
+            return Err(FrameError::BadFrameSize);
         }
 
         if Self::is_padded(flags) {
             todo!("Padding and priority stream are not implemented");
         }
 
-        if !Self::is_end_header(flags) {
-            todo!("Header continuation is not implemented");
-        }
-
         let payload_offset = if Self::is_priority(flags) { 5 } else { 0 };
-
         match decoder.decode(&value[payload_offset..length]) {
             Ok(hds) => Ok(Self {
                 headers: hds
@@ -63,28 +79,17 @@ impl Headers {
                         )
                     })
                     .collect(),
-                end_headers: Self::is_end_header(flags),
                 end_stream: Self::is_end_stream(flags),
             }),
             Err(err) => {
                 error!("HPACK decoder error: {:?}", err);
-                Err("decoder error")
+                Err(FrameError::HpackDecoderError(err))
             }
         }
     }
 
-    pub fn are_header_terminated(&self) -> bool {
-        self.end_headers
-    }
-
     pub fn should_stream_close(&self) -> bool {
         self.end_stream
-    }
-
-    pub fn add_headers(&mut self, headers: &[(Bytes, Bytes)]) {
-        for (k, v) in headers {
-            self.headers.insert(k.clone(), v.clone()); // Bytes are cheap to clone
-        }
     }
 
     #[inline]
@@ -93,7 +98,7 @@ impl Headers {
     }
 
     #[inline]
-    fn is_end_header(flags: u8) -> bool {
+    pub fn is_end_header(flags: u8) -> bool {
         flags & 0x04 > 0
     }
 
@@ -110,7 +115,6 @@ impl Headers {
 
 impl HttpRequest for Headers {
     fn get_type(&self) -> Result<RequestType, RequestError> {
-        trace!("get type: {:?}", self.headers);
         match self.headers.get(b":method".as_slice()) {
             Some(kind) => RequestType::try_from(&kind[..]),
             None => Err(RequestError::MalformedRequest),

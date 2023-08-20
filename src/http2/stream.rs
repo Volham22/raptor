@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 use tracing::{debug, error, trace};
 
-use super::frames::{Continuation, FrameError, Headers};
+use super::frames::Headers;
 
 #[derive(Debug, PartialEq)]
 enum StreamState {
@@ -77,32 +77,8 @@ impl Stream {
     }
 
     pub fn set_headers(&mut self, header: Headers) {
+        trace!("Set headers: to stream {}", self.identifier);
         self.request_headers = Some(header);
-    }
-
-    pub fn add_contination_frame(&mut self, continuation: &Continuation) -> Result<(), FrameError> {
-        if self.request_headers.is_none() {
-            error!("Received continuation frame but no header frame is associated to the stream");
-            return Err(FrameError::ContinuationWithoutHeader);
-        }
-
-        if self
-            .request_headers
-            .as_ref()
-            .unwrap()
-            .are_header_terminated()
-        {
-            error!("Received a continuation frame but received a END_HEADER before");
-            return Err(FrameError::ContinuationWithEndHeadersSet);
-        }
-
-        trace!("Adding continuation frame to stream's headers");
-        self.request_headers
-            .as_mut()
-            .unwrap()
-            .add_headers(&continuation.headers);
-
-        Ok(())
     }
 
     pub fn mark_as_closed(&mut self) {

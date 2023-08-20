@@ -1,6 +1,7 @@
 use std::io;
 
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
+use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -10,10 +11,22 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::http2::{
     check_connection_preface,
-    frames::{self, Frame, FrameType, Settings, FRAME_HEADER_LENGTH},
+    frames::{self, Frame, FrameType, Headers, Settings, FRAME_HEADER_LENGTH},
     response::{build_frame_header, respond_request, ResponseSerialize},
     stream::StreamManager,
 };
+
+#[derive(Error, Debug)]
+pub enum ConnectionError {
+    #[error("Missing continuation frame for headers")]
+    MissingContinuationFrame,
+    #[error("IO error: {0:?}")]
+    IOError(io::Error),
+    #[error("Invalid header frame: {0:?}")]
+    InvalidHeaderFrame(frames::FrameError),
+    #[error("Invalid continuation frame: {0:?}")]
+    InvalidContinuationFrame(frames::FrameError),
+}
 
 pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> io::Result<()> {
     let mut sent_data = 0usize;
@@ -36,6 +49,131 @@ async fn send_server_setting(stream: &mut TlsStream<TcpStream>) -> io::Result<()
     send_all(stream, &buffer[..]).await
 }
 
+async fn receive_headers(
+    stream: &mut TlsStream<TcpStream>,
+    buffer: &mut BytesMut,
+    decoder: &mut hpack::Decoder<'_>,
+    frame: &Frame,
+) -> Result<Headers, ConnectionError> {
+    trace!("Receiving headers");
+    match frames::Headers::from_bytes(
+        &buffer[..FRAME_HEADER_LENGTH],
+        decoder,
+        frame.flags,
+        frame.length as usize,
+    ) {
+        Ok(h) => Ok(h),
+        Err(err) => match err {
+            frames::FrameError::BadFrameSize => loop {
+                trace!("Bad frame size for headers, keep reading again...");
+                let _ = stream
+                    .read_buf(buffer)
+                    .await
+                    .map_err(ConnectionError::IOError)?;
+                let headers = frames::Headers::from_bytes(
+                    &buffer[FRAME_HEADER_LENGTH..],
+                    decoder,
+                    frame.flags,
+                    frame.length as usize,
+                );
+
+                match headers {
+                    Ok(h) => return Ok(h),
+                    Err(frames::FrameError::BadFrameSize) => continue,
+                    Err(err) => {
+                        debug!("Fully received the header frame, but failed to parse its headers.");
+                        if buffer[FRAME_HEADER_LENGTH..].len() >= frame.length as usize
+                            && Headers::is_end_header(frame.flags)
+                        {
+                            return Err(ConnectionError::InvalidHeaderFrame(err));
+                        }
+                        debug!("END_HEADER flag not set");
+                        trace!("Try to receive continuation frames");
+
+                        let mut headers_bytes = Headers::extract_headers_data(
+                            &buffer[FRAME_HEADER_LENGTH..],
+                            frame.flags,
+                            frame.length as usize,
+                        )
+                        .map_err(ConnectionError::InvalidHeaderFrame)?;
+                        buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+                        debug!(
+                            "Extracted {} bytes from first header frame",
+                            headers_bytes.len()
+                        );
+                        return receive_continuation_frames(
+                            stream,
+                            buffer,
+                            &mut headers_bytes,
+                            decoder,
+                            frame,
+                        )
+                        .await;
+                    }
+                }
+            },
+            _ => Err(ConnectionError::InvalidHeaderFrame(err)),
+        },
+    }
+}
+
+async fn receive_continuation_frames(
+    stream: &mut TlsStream<TcpStream>,
+    buffer: &mut BytesMut,
+    headers_bytes: &mut BytesMut,
+    decoder: &mut hpack::Decoder<'_>,
+    frame: &Frame,
+) -> Result<Headers, ConnectionError> {
+    trace!("Begin continuation frame handling");
+    let mut total_size: usize = frame.length as usize;
+
+    loop {
+        let frame =
+            Frame::try_from(buffer.as_ref()).map_err(ConnectionError::InvalidHeaderFrame)?;
+        if let FrameType::Continuation = frame.frame_type {
+            debug!("Got continuation frame header: {frame:?}");
+            let continuation = match frames::Continuation::from_bytes(
+                &buffer[FRAME_HEADER_LENGTH..],
+                frame.flags,
+                frame.length as usize,
+            ) {
+                Ok(c) => c,
+                Err(frames::FrameError::BadFrameSize) => {
+                    trace!(
+                        "Continuation frame not full. (length: {}, got: {})",
+                        frame.length,
+                        buffer[FRAME_HEADER_LENGTH..].len()
+                    );
+                    continue;
+                }
+                Err(err) => return Err(ConnectionError::InvalidContinuationFrame(err)),
+            };
+
+            info!("Received continuation frame: {continuation:?}");
+            total_size += continuation.headers.len();
+            debug!("Total header size is now: {total_size}");
+            headers_bytes.put_slice(continuation.headers.as_ref());
+            buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+
+            if continuation.is_end_header() {
+                trace!("Continuation has END_HEADER set. stop receiving");
+                break;
+            } else {
+                trace!("Continuation has not END_HEADER set. keep receiving...");
+                let _ = stream
+                    .read_buf(buffer)
+                    .await
+                    .map_err(ConnectionError::IOError)?;
+            }
+        } else {
+            return Err(ConnectionError::MissingContinuationFrame);
+        }
+    }
+
+    Headers::from_bytes(headers_bytes.as_ref(), decoder, frame.flags, total_size)
+        .map_err(ConnectionError::InvalidHeaderFrame)
+}
+
 pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) -> io::Result<()> {
     let mut buffer = BytesMut::new();
     let mut stream = ssl_socket.accept(client_socket).await?;
@@ -50,8 +188,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
     send_server_setting(&mut stream).await?;
 
     loop {
-        debug!("buffer content: {:X?}", buffer);
-        let frame = match Frame::try_from(&buffer) {
+        let frame = match Frame::try_from(buffer.as_ref()) {
             Ok(fr) => fr,
             Err(msg) => {
                 warn!("Bad frame: {msg}");
@@ -112,28 +249,31 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                 }
             }
             FrameType::Headers => {
-                let headers = if let Ok(h) = frames::Headers::from_bytes(
-                    &buffer[FRAME_HEADER_LENGTH..],
-                    &mut decoder,
-                    frame.flags,
-                    frame.length as usize,
-                ) {
-                    h
-                } else {
-                    let _ = stream.read_buf(&mut buffer).await?;
-                    continue;
-                };
-                info!("Headers: {:?}", headers);
-                if !stream_manager.has_stream(frame.stream_identifier) {
-                    stream_manager.register_new_stream(frame.stream_identifier);
+                match receive_headers(&mut stream, &mut buffer, &mut decoder, &frame).await {
+                    Ok(headers) => {
+                        if !stream_manager.has_stream(frame.stream_identifier) {
+                            stream_manager.register_new_stream(frame.stream_identifier);
+                        }
+
+                        stream_manager
+                            .get_at_mut(frame.stream_identifier)
+                            .unwrap()
+                            .set_headers(headers);
+
+                        respond_request(
+                            &mut stream,
+                            frame.stream_identifier,
+                            &mut stream_manager,
+                            &mut encoder,
+                        )
+                        .await?;
+                        continue; // continue here to avoid classic buffer advance because it may be more than (FRAME_HEADER_LENGTH + frame.length)
+                    }
+                    Err(err) => {
+                        error!("Failed to parse headers: {err:?}");
+                        todo!("Handle error");
+                    }
                 }
-
-                stream_manager
-                    .get_at_mut(frame.stream_identifier)
-                    .unwrap()
-                    .set_headers(headers);
-
-                respond_request(&mut stream, frame.stream_identifier, &mut stream_manager, &mut encoder).await?;
             }
             FrameType::GoAway => {
                 info!("Go away received: {:?}", frame);
@@ -147,27 +287,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                 info!("Priority received: {:?}", frame);
             }
             FrameType::Continuation => {
-                let continuation_frame = frames::Continuation::from_bytes(
-                    &buffer[FRAME_HEADER_LENGTH..],
-                    &mut decoder,
-                    frame.flags,
-                    frame.length as usize,
-                )
-                .expect("Failed to parse continuation_frame");
-                info!("Continuation frame received: {continuation_frame:?}");
-
-                match stream_manager.get_at_mut(frame.stream_identifier) {
-                    Some(st) => {
-                        if let Err(err) = st.add_contination_frame(&continuation_frame) {
-                            error!("Error while registering continuation frame: {err:?}");
-                            todo!("Handle error");
-                        }
-                    }
-                    None => {
-                        error!("No stream associated to the continuation frame: {continuation_frame:?}");
-                        todo!("Handle error");
-                    }
-                }
+                todo!("Handle continuation without headers");
             }
             FrameType::ResetStream => {
                 info!("Reset stream received: {frame:?}");
@@ -176,6 +296,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
         }
 
         // Parse next frame
+        trace!("Advancing buffer");
         buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
         if buffer.is_empty() {
             let _ = stream.read_buf(&mut buffer).await?;

@@ -3,7 +3,7 @@ use std::io;
 use bytes::{BufMut, BytesMut};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::{
     connection::send_all,
@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     frames::{Data, FrameType, Headers},
-    stream::{Stream, StreamManager},
+    stream::{StreamManager},
 };
 
 pub fn build_frame_header<T: ResponseSerialize>(
