@@ -14,10 +14,9 @@ pub async fn handle_request<T: HttpRequest>(req: &T) -> io::Result<Option<Vec<u8
 }
 
 pub async fn handle_get<T: HttpRequest>(req: &T) -> io::Result<Vec<u8>> {
-    let mut get_path = Path::new(".").to_path_buf();
-    get_path.push(Path::new(
-        String::from_utf8_lossy(req.get_uri().unwrap()).as_ref(),
-    ));
+    let path = format!(".{}", String::from_utf8_lossy(req.get_uri().unwrap()));
+    let get_path = Path::new(&path);
+    println!("Path: {:?}", get_path);
 
     fs::read(get_path).await
 }

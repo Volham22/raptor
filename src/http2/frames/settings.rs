@@ -95,20 +95,31 @@ impl Settings {
 }
 
 impl ResponseSerialize for Settings {
-    fn serialize_response(&self, buffer: &mut BytesMut) {
+    fn serialize_response(&self, _: Option<&mut hpack::Encoder>) -> Vec<u8> {
+        let mut result = Vec::new();
         if self.is_ack {
-            return;
+            return result;
         }
 
         for (kind, value) in &self.flags {
             // Setting id
-            buffer.put_u16((*kind as u16).to_be());
+            result.put_slice(&(*kind as u16).to_be_bytes());
             // value
-            buffer.put_u32(value.to_be());
+            result.put_slice(&value.to_be_bytes())
         }
+
+        result
     }
 
-    fn compute_frame_length(&self) -> u32 {
+    fn compute_frame_length(&self, _: Option<&mut hpack::Encoder>) -> u32 {
         (TUPLE_LENGTH * self.flags.len()) as u32
+    }
+
+    fn get_flags(&self) -> u8 {
+        if self.is_ack {
+            0x01
+        } else {
+            0x00
+        }
     }
 }
