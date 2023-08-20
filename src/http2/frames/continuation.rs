@@ -11,7 +11,7 @@ pub struct Continuation {
 impl Continuation {
     pub fn from_bytes(value: &[u8], flags: u8, length: usize) -> Result<Self, FrameError> {
         if value.len() < length {
-            return Err(FrameError::BadFrameSize);
+            return Err(FrameError::BadFrameSize(value.len()));
         }
 
         Ok(Self {

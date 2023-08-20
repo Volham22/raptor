@@ -121,7 +121,7 @@ impl StreamManager {
         match self.streams.get(&index) {
             Some(s) => Some(s),
             None => {
-                tracing::error!("Tried to get an unregistered stream {}", index);
+                tracing::warn!("Tried to get an unregistered stream {}", index);
                 None
             }
         }
@@ -131,7 +131,7 @@ impl StreamManager {
         match self.streams.get_mut(&index) {
             Some(s) => Some(s),
             None => {
-                tracing::error!("Tried to get an unregistered stream {}", index);
+                tracing::warn!("Tried to get an unregistered stream {}", index);
                 None
             }
         }

@@ -4,8 +4,8 @@ pub const FRAME_HEADER_LENGTH: usize = 9;
 
 #[derive(Error, Debug)]
 pub enum FrameError {
-    #[error("Not enought bytes to parse a frame (len < 9)")]
-    BadFrameSize,
+    #[error("Not enought bytes to parse a frame ({0} < 9)")]
+    BadFrameSize(usize),
     #[error("Unknown frame number `{0}`")]
     UnknownFrameNumber(u8),
     #[error("HPACK decoder error: '{0:?}'")]
@@ -64,7 +64,7 @@ impl TryFrom<&[u8]> for Frame {
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         if bytes.len() < FRAME_HEADER_LENGTH {
-            return Err(FrameError::BadFrameSize);
+            return Err(FrameError::BadFrameSize(bytes.len()));
         }
 
         let length = u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]]);

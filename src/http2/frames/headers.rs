@@ -39,7 +39,7 @@ impl Headers {
     ) -> Result<BytesMut, FrameError> {
         trace!("extracting header data");
         if length > value.len() {
-            return Err(FrameError::BadFrameSize);
+            return Err(FrameError::BadFrameSize(value.len()));
         }
 
         if Self::is_padded(flags) {
@@ -60,7 +60,7 @@ impl Headers {
     ) -> Result<Self, FrameError> {
         trace!("Decoding header frame");
         if length > value.len() {
-            return Err(FrameError::BadFrameSize);
+            return Err(FrameError::BadFrameSize(value.len()));
         }
 
         if Self::is_padded(flags) {

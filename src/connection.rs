@@ -62,9 +62,12 @@ async fn receive_headers(
         frame.flags,
         frame.length as usize,
     ) {
-        Ok(h) => Ok(h),
+        Ok(h) => {
+            buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+            Ok(h)
+        }
         Err(err) => match err {
-            frames::FrameError::BadFrameSize => loop {
+            frames::FrameError::BadFrameSize(_) => loop {
                 trace!("Bad frame size for headers, keep reading again...");
                 let _ = stream
                     .read_buf(buffer)
@@ -78,8 +81,11 @@ async fn receive_headers(
                 );
 
                 match headers {
-                    Ok(h) => return Ok(h),
-                    Err(frames::FrameError::BadFrameSize) => continue,
+                    Ok(h) => {
+                        buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+                        return Ok(h);
+                    }
+                    Err(frames::FrameError::BadFrameSize(_)) => continue,
                     Err(err) => {
                         debug!("Fully received the header frame, but failed to parse its headers.");
                         if buffer[FRAME_HEADER_LENGTH..].len() >= frame.length as usize
@@ -138,11 +144,11 @@ async fn receive_continuation_frames(
                 frame.length as usize,
             ) {
                 Ok(c) => c,
-                Err(frames::FrameError::BadFrameSize) => {
+                Err(frames::FrameError::BadFrameSize(len)) => {
                     trace!(
                         "Continuation frame not full. (length: {}, got: {})",
                         frame.length,
-                        buffer[FRAME_HEADER_LENGTH..].len()
+                        len,
                     );
                     continue;
                 }
