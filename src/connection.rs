@@ -58,6 +58,8 @@ pub enum ConnectionError {
     BadPingFrameSize,
     #[error("Window update of 0")]
     ZeroWindowUpdate,
+    #[error("Window update frame lenght is incorrect: ({0} != 4)")]
+    BadLengthWindowUpdate(u32),
 }
 
 type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -220,6 +222,7 @@ async fn send_go_away(stream: &mut TlsStream<TcpStream>, err: ConnectionError) -
     let error_type = match err {
         ConnectionError::IOError(_) => unreachable!(),
         ConnectionError::NonZeroSettingsAckLength
+        | ConnectionError::BadLengthWindowUpdate(_)
         | ConnectionError::SettingsLengthNotMultipleOf6 => frames::ErrorType::FrameSizeError,
         _ => frames::ErrorType::ProtocolError,
     };
@@ -325,6 +328,11 @@ pub async fn do_connection_loop(
                 if window_update.0 == 0 {
                     error!("Received a window update of 0");
                     return Err(ConnectionError::ZeroWindowUpdate);
+                }
+
+                if frame.length != 4 {
+                    error!("Window update length is not 4");
+                    return Err(ConnectionError::BadLengthWindowUpdate(frame.length));
                 }
 
                 match stream_manager.get_at_mut(frame.stream_identifier) {
