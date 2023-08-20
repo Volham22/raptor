@@ -40,6 +40,12 @@ pub enum ConnectionError {
     InvalidHeaderFrame(frames::FrameError),
     #[error("Invalid continuation frame: {0:?}")]
     InvalidContinuationFrame(frames::FrameError),
+    #[error("Invalid frame")]
+    InvalidFrame,
+    #[error("Go away received on a stream id other than 0")]
+    GoAwayOnNonDefaultStream,
+    #[error("Received continuation frame without header frame")]
+    ContinuationFrameWithoutHeaderFrame,
 }
 
 type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -320,7 +326,7 @@ pub async fn do_connection_loop(
                     }
                     Err(err) => {
                         error!("Failed to parse headers: {err:?}");
-                        todo!("Handle error");
+                        return Err(ConnectionError::InvalidFrame);
                     }
                 }
             }
@@ -341,16 +347,18 @@ pub async fn do_connection_loop(
                         continue;
                     }
                     Err(_) => {
-                        todo!("handle error");
+                        return Err(ConnectionError::InvalidFrame);
                     }
                 };
 
                 if frame.stream_identifier != 0 {
-                    todo!("handle error");
+                    return Err(ConnectionError::GoAwayOnNonDefaultStream);
                 }
 
                 if go_away.is_error() {
                     error!("Received go away frame: {:?}", go_away);
+                } else {
+                    info!("Terminate connection without errors.");
                 }
 
                 return Ok(());
@@ -360,10 +368,11 @@ pub async fn do_connection_loop(
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Continuation => {
-                todo!("Handle continuation without headers");
+                return Err(ConnectionError::ContinuationFrameWithoutHeaderFrame);
             }
             FrameType::ResetStream => {
                 info!("Reset stream received: {frame:?}");
+                todo!("Handle reset stream");
             }
             FrameType::Data => todo!(),
             FrameType::PushPromise => todo!(),
@@ -416,7 +425,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
     buffer.advance(preface_offset); // consume connection preface in buffer
     match send_server_setting(&mut stream).await {
         Ok(()) => {
-            info!("Connection terminated gracefully.");
+            info!("Connection terminated.");
         }
         Err(ConnectionError::IOError(e)) => return Err(e),
         Err(err) => send_go_away(&mut stream, err).await?,
