@@ -9,6 +9,8 @@ pub enum FrameError {
     BadFrameSize,
     #[error("Unknown frame number `{0}`")]
     UnknownFrameNumber(u8),
+    #[error("HPACK decoder error: '{0:?}'")]
+    HpackDecoderError(hpack::decoder::DecoderError),
 }
 
 #[repr(u8)]

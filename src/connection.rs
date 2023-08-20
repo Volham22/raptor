@@ -124,6 +124,16 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             FrameType::Priority => {
                 info!("Priority received: {:?}", frame);
             }
+            FrameType::Continuation => {
+                let continuation_frame = frames::Continuation::from_bytes(
+                    &buffer[FRAME_HEADER_LENGTH..],
+                    &mut decoder,
+                    frame.flags,
+                    frame.length as usize,
+                )
+                .expect("Failed to parse continuation_frame");
+                info!("Continuation frame received: {continuation_frame:?}");
+            }
             FrameType::ResetStream => {
                 info!("Reset stream received: {frame:?}");
             }
