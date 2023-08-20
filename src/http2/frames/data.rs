@@ -34,6 +34,6 @@ impl ResponseSerialize for Data {
     }
 
     fn get_flags(&self) -> u8 {
-        0x01
+        self.flags
     }
 }

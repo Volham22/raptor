@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use tracing::{error, trace};
 
 use crate::{
@@ -12,7 +10,7 @@ use super::FrameError;
 
 #[derive(Debug, Clone)]
 pub struct Headers {
-    headers: HashMap<Bytes, Bytes>,
+    headers: Vec<(Vec<u8>, Vec<u8>)>,
     end_stream: bool,
 }
 
@@ -21,12 +19,7 @@ impl Headers {
         Self {
             headers: headers
                 .iter()
-                .map(|(k, v)| {
-                    (
-                        Bytes::copy_from_slice(&k[..]),
-                        Bytes::copy_from_slice(&v[..]),
-                    )
-                })
+                .map(|(k, v)| (k.to_vec(), v.to_vec()))
                 .collect(),
             end_stream: false,
         }
@@ -70,15 +63,7 @@ impl Headers {
         let payload_offset = if Self::is_priority(flags) { 5 } else { 0 };
         match decoder.decode(&value[payload_offset..length]) {
             Ok(hds) => Ok(Self {
-                headers: hds
-                    .iter()
-                    .map(|(k, v)| {
-                        (
-                            Bytes::copy_from_slice(k.as_slice()),
-                            Bytes::copy_from_slice(v.as_slice()),
-                        )
-                    })
-                    .collect(),
+                headers: hds,
                 end_stream: Self::is_end_stream(flags),
             }),
             Err(err) => {
@@ -115,16 +100,21 @@ impl Headers {
 
 impl HttpRequest for Headers {
     fn get_type(&self) -> Result<RequestType, RequestError> {
-        match self.headers.get(b":method".as_slice()) {
-            Some(kind) => RequestType::try_from(&kind[..]),
+        match self
+            .headers
+            .iter()
+            .find(|(k, _)| k.as_slice() == b":method")
+        {
+            Some(kind) => RequestType::try_from(&kind.1[..]),
             None => Err(RequestError::MalformedRequest),
         }
     }
 
     fn get_uri(&self) -> Result<&[u8], RequestError> {
         self.headers
-            .get(b":path".as_slice())
-            .map(|v| &v[..])
+            .iter()
+            .find(|(k, _)| k.as_slice() == b":path")
+            .map(|v| &v.1[..])
             .ok_or(RequestError::MalformedRequest)
     }
 }
@@ -133,17 +123,7 @@ impl ResponseSerialize for Headers {
     fn serialize_response(&self, encoder: Option<&mut hpack::Encoder>) -> Vec<u8> {
         encoder
             .unwrap()
-            .encode(
-                self.headers
-                    .iter()
-                    .filter(|(k, _)| k.starts_with(&[b':']))
-                    .chain(self.headers.iter().filter(|(k, _)| !k.starts_with(&[b':'])))
-                    .map(|(k, v)| (&k[..], &v[..]))
-                    .collect::<Vec<(&[u8], &[u8])>>(),
-            )
-            .iter()
-            .map(|x| x.to_be())
-            .collect()
+            .encode(self.headers.iter().map(|(k, v)| (&k[..], &v[..])))
     }
 
     fn compute_frame_length(&self, encoder: Option<&mut hpack::Encoder>) -> u32 {

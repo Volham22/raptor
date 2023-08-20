@@ -57,7 +57,7 @@ async fn receive_headers(
 ) -> Result<Headers, ConnectionError> {
     trace!("Receiving headers");
     match frames::Headers::from_bytes(
-        &buffer[..FRAME_HEADER_LENGTH],
+        &buffer[FRAME_HEADER_LENGTH..],
         decoder,
         frame.flags,
         frame.length as usize,
@@ -67,8 +67,8 @@ async fn receive_headers(
             Ok(h)
         }
         Err(err) => match err {
-            frames::FrameError::BadFrameSize(_) => loop {
-                trace!("Bad frame size for headers, keep reading again...");
+            frames::FrameError::BadFrameSize(s) => loop {
+                trace!("Bad frame size for headers (frame_length: {}, actual: {s}), keep reading again...", frame.length);
                 let _ = stream
                     .read_buf(buffer)
                     .await
@@ -194,7 +194,8 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
     send_server_setting(&mut stream).await?;
 
     loop {
-        let frame = match Frame::try_from(buffer.as_ref()) {
+        let frame_result = Frame::try_from(buffer.as_ref());
+        let frame = match frame_result {
             Ok(fr) => fr,
             Err(msg) => {
                 warn!("Bad frame: {msg}");
@@ -222,17 +223,18 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                 .expect("Failed to parse settings");
                 info!("settings: {:?}", settings);
 
-                let mut buffer = BytesMut::with_capacity(
+                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
+                let mut ack_buffer = BytesMut::with_capacity(
                     settings.compute_frame_length(None) as usize + FRAME_HEADER_LENGTH,
                 );
                 build_frame_header(
-                    &mut buffer,
+                    &mut ack_buffer,
                     frame.frame_type,
                     frame.stream_identifier,
                     &Settings::new_ack(),
                     None,
                 );
-                send_all(&mut stream, &buffer[..]).await?;
+                send_all(&mut stream, &ack_buffer[..]).await?;
             }
             FrameType::WindowUpdate => {
                 let window_update = frames::WindowUpdate::from_bytes(
@@ -253,6 +255,8 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                             .update_window(window_update.0);
                     }
                 }
+
+                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Headers => {
                 match receive_headers(&mut stream, &mut buffer, &mut decoder, &frame).await {
@@ -273,7 +277,6 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
                             &mut encoder,
                         )
                         .await?;
-                        continue; // continue here to avoid classic buffer advance because it may be more than (FRAME_HEADER_LENGTH + frame.length)
                     }
                     Err(err) => {
                         error!("Failed to parse headers: {err:?}");
@@ -283,6 +286,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             }
             FrameType::GoAway => {
                 info!("Go away received: {:?}", frame);
+                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
 
                 if frame.stream_identifier == 0 && frame.flags == 0 {
                     info!("Gracefully closing the connection");
@@ -291,6 +295,7 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             }
             FrameType::Priority => {
                 info!("Priority received: {:?}", frame);
+                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Continuation => {
                 todo!("Handle continuation without headers");
@@ -298,14 +303,9 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
             FrameType::ResetStream => {
                 info!("Reset stream received: {frame:?}");
             }
-            _ => continue,
-        }
-
-        // Parse next frame
-        trace!("Advancing buffer");
-        buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
-        if buffer.is_empty() {
-            let _ = stream.read_buf(&mut buffer).await?;
+            FrameType::Data => todo!(),
+            FrameType::PushPromise => todo!(),
+            FrameType::Ping => todo!(),
         }
     }
 

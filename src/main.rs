@@ -13,7 +13,7 @@ use tokio_rustls::{
     rustls::{self, Certificate, PrivateKey},
     TlsAcceptor,
 };
-use tracing::{debug, info, span, warn, Level};
+use tracing::{debug, info, warn, Level};
 
 mod connection;
 mod http2;
@@ -72,12 +72,9 @@ async fn main() -> io::Result<()> {
         info!("New client connection from {client_addr:?}");
 
         tokio::spawn(async move {
-            debug!("Started connection handling for {client_addr:?}");
-            let fut = async move {
-                let span = span!(Level::DEBUG, "Client connection handling");
-                let _ = span.enter();
-                do_connection(acceptor, client_socket).await
-            };
+            info!("Started connection handling for {client_addr:?}");
+            let fut = async move { do_connection(acceptor, client_socket).await };
+
             if let Err(err) = fut.await {
                 warn!("client connection handler error: {:?}", err);
             }

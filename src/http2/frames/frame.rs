@@ -17,7 +17,7 @@ pub enum FrameError {
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum FrameType {
     Data = 0,
     Headers = 1,

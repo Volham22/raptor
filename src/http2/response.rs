@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     frames::{Data, FrameType, Headers},
-    stream::{StreamManager},
+    stream::StreamManager,
 };
 
 pub fn build_frame_header<T: ResponseSerialize>(
