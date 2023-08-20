@@ -52,6 +52,12 @@ pub enum ConnectionError {
     SettingsNonDefaultSream,
     #[error("Settings frame length is not a multiple of 6")]
     SettingsLengthNotMultipleOf6,
+    #[error("Ping on non 0 stream")]
+    PingOnNon0Stream,
+    #[error("Ping frame length is not 8 bytes")]
+    BadPingFrameSize,
+    #[error("Window update of 0")]
+    ZeroWindowUpdate,
 }
 
 type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -213,7 +219,8 @@ async fn send_go_away(stream: &mut TlsStream<TcpStream>, err: ConnectionError) -
 
     let error_type = match err {
         ConnectionError::IOError(_) => unreachable!(),
-        ConnectionError::NonZeroSettingsAckLength | ConnectionError::SettingsLengthNotMultipleOf6 => frames::ErrorType::FrameSizeError,
+        ConnectionError::NonZeroSettingsAckLength
+        | ConnectionError::SettingsLengthNotMultipleOf6 => frames::ErrorType::FrameSizeError,
         _ => frames::ErrorType::ProtocolError,
     };
 
@@ -255,6 +262,7 @@ pub async fn do_connection_loop(
         info!("received frame: {:?}", frame);
 
         match frame.frame_type {
+            // TODO: We may want to add a timeout for settings frames. As adviced by RFC 9113
             FrameType::Settings => {
                 // Settings for a stream other than 0 are not allowed
                 if frame.stream_identifier != 0 {
@@ -310,8 +318,14 @@ pub async fn do_connection_loop(
                     &buffer[FRAME_HEADER_LENGTH..],
                     frame.length as usize,
                 )
-                .expect("Failed to parse window update");
+                .map_err(|_| ConnectionError::InvalidFrame)?;
                 info!("Window update: {:?}", window_update);
+
+                // See RFC 9113
+                if window_update.0 == 0 {
+                    error!("Received a window update of 0");
+                    return Err(ConnectionError::ZeroWindowUpdate);
+                }
 
                 match stream_manager.get_at_mut(frame.stream_identifier) {
                     Some(st) => st.update_window(window_update.0),
@@ -414,6 +428,18 @@ pub async fn do_connection_loop(
                         }
                         Err(_) => unreachable!(),
                     };
+
+                // See RFC 9113
+                if frame.length != 8 {
+                    error!("Ping frame has a length other than 8");
+                    return Err(ConnectionError::BadPingFrameSize);
+                }
+
+                // See RFC 9113
+                if frame.stream_identifier != 0 {
+                    error!("Ping on non zero stream received");
+                    return Err(ConnectionError::PingOnNon0Stream);
+                }
 
                 if ping.is_ack {
                     info!("Received ping ack with value: {}", ping.opaque_data);
