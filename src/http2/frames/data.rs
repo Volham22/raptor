@@ -11,13 +11,13 @@ impl Data {
         Self { payload, flags: 0 }
     }
 
-    pub fn is_end_stream(&self) -> bool {
-        self.flags & 0x01 > 0
-    }
-
-    pub fn is_padded(&self) -> bool {
-        self.flags & 0x08 > 0
-    }
+    // pub fn is_end_stream(&self) -> bool {
+    //     self.flags & 0x01 > 0
+    // }
+    //
+    // pub fn is_padded(&self) -> bool {
+    //     self.flags & 0x08 > 0
+    // }
 
     pub fn set_flags(&mut self, flags: u8) {
         self.flags = flags;

@@ -11,7 +11,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::http2::{
     check_connection_preface,
-    frames::{self, Frame, FrameType, Headers, Settings, FRAME_HEADER_LENGTH},
+    frames::{self, Frame, FrameType, FRAME_HEADER_LENGTH},
     response::{build_frame_header, respond_request, ResponseSerialize},
     stream::StreamManager,
 };
@@ -46,6 +46,8 @@ pub enum ConnectionError {
     GoAwayOnNonDefaultStream,
     #[error("Received continuation frame without header frame")]
     ContinuationFrameWithoutHeaderFrame,
+    #[error("Settings ACK length is not 0")]
+    NonZeroSettingsAckLength,
 }
 
 type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -61,7 +63,7 @@ pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> Connect
 }
 
 async fn send_server_setting(stream: &mut TlsStream<TcpStream>) -> ConnectionResult<()> {
-    let default_settings = Settings::default(); // TODO: This could be constant
+    let default_settings = frames::Settings::default(); // TODO: This could be constant
     debug!("Send server settings: {default_settings:?}");
     let mut buffer = BytesMut::with_capacity(
         FRAME_HEADER_LENGTH + default_settings.compute_frame_length(None) as usize,
@@ -76,7 +78,7 @@ async fn receive_headers(
     buffer: &mut BytesMut,
     decoder: &mut hpack::Decoder<'_>,
     frame: &Frame,
-) -> ConnectionResult<Headers> {
+) -> ConnectionResult<frames::Headers> {
     trace!("Receiving headers");
     match frames::Headers::from_bytes(
         &buffer[FRAME_HEADER_LENGTH..],
@@ -111,14 +113,14 @@ async fn receive_headers(
                     Err(err) => {
                         debug!("Fully received the header frame, but failed to parse its headers.");
                         if buffer[FRAME_HEADER_LENGTH..].len() >= frame.length as usize
-                            && Headers::is_end_header(frame.flags)
+                            && frames::Headers::is_end_header(frame.flags)
                         {
                             return Err(ConnectionError::InvalidHeaderFrame(err));
                         }
                         debug!("END_HEADER flag not set");
                         trace!("Try to receive continuation frames");
 
-                        let mut headers_bytes = Headers::extract_headers_data(
+                        let mut headers_bytes = frames::Headers::extract_headers_data(
                             &buffer[FRAME_HEADER_LENGTH..],
                             frame.flags,
                             frame.length as usize,
@@ -151,7 +153,7 @@ async fn receive_continuation_frames(
     headers_bytes: &mut BytesMut,
     decoder: &mut hpack::Decoder<'_>,
     frame: &Frame,
-) -> ConnectionResult<Headers> {
+) -> ConnectionResult<frames::Headers> {
     trace!("Begin continuation frame handling");
     let mut total_size: usize = frame.length as usize;
 
@@ -198,7 +200,7 @@ async fn receive_continuation_frames(
         }
     }
 
-    Headers::from_bytes(headers_bytes.as_ref(), decoder, frame.flags, total_size)
+    frames::Headers::from_bytes(headers_bytes.as_ref(), decoder, frame.flags, total_size)
         .map_err(ConnectionError::InvalidHeaderFrame)
 }
 
@@ -257,6 +259,15 @@ pub async fn do_connection_loop(
                 // Setting ACK, ignore the frame.
                 if frame.flags & 0x01 > 0 {
                     debug!("Client ack settings");
+
+                    if frame.length > 0 {
+                        error!(
+                            "Settings ACK frame received with a length of {}",
+                            frame.length
+                        );
+                        return Err(ConnectionError::NonZeroSettingsAckLength);
+                    }
+
                     buffer.advance(FRAME_HEADER_LENGTH); // consume current frame
                     continue;
                 }
@@ -276,7 +287,7 @@ pub async fn do_connection_loop(
                     &mut ack_buffer,
                     frame.frame_type,
                     frame.stream_identifier,
-                    &Settings::new_ack(),
+                    &frames::Settings::new_ack(),
                     None,
                 );
                 send_all(stream, &ack_buffer[..]).await?;
