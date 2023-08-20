@@ -19,6 +19,7 @@ mod connection;
 mod http2;
 mod method_handlers;
 mod request;
+mod response;
 
 fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
     let mut cert_buffer = BufReader::new(File::open(path)?);
@@ -73,7 +74,10 @@ async fn main() -> io::Result<()> {
 
         tokio::spawn(async move {
             info!("Started connection handling for {client_addr:?}");
-            let fut = async move { do_connection(acceptor, client_socket).await };
+            let fut = async move {
+                client_socket.set_nodelay(true)?;
+                do_connection(acceptor, client_socket).await
+            };
 
             if let Err(err) = fut.await {
                 warn!("client connection handler error: {:?}", err);
