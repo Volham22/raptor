@@ -1,24 +1,24 @@
 use std::io;
 
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use crate::{
     connection::send_all,
-    method_handlers::handle_get,
+    method_handlers::handle_request,
     request::{HttpRequest, RequestType},
 };
 
 use super::{
-    frames::{Data, FrameType, Headers},
+    frames::{self},
     stream::StreamManager,
 };
 
 pub fn build_frame_header<T: ResponseSerialize>(
     buffer: &mut BytesMut,
-    frame_type: FrameType,
+    frame_type: frames::FrameType,
     stream_identifer: u32,
     frame: &T,
     encoder: Option<&mut hpack::Encoder>,
@@ -49,58 +49,61 @@ pub async fn respond_request(
     match headers.get_type() {
         Ok(kind) => match kind {
             RequestType::Get => {
-                let get_payload = handle_get(headers).await?;
+                let mut response = handle_request(headers).await;
                 let http_stream = stream_manager.get_at_mut(stream_identifer).unwrap();
 
-                if !http_stream.has_room_in_window(get_payload.len() as u32) {
-                    info!(
-                        "Stream {} has not enough room to send response payload",
-                        http_stream.identifier
-                    );
-                    todo!("Handle error");
-                }
-
-                http_stream
-                    .consume_space(get_payload.len() as u32)
-                    .expect("Tried to consume space on a too small window");
-
-                let payload_size = get_payload.len().to_string();
-                let response_headers = Headers::new(&[
-                    (b":status", b"200"),
-                    (b"content-type", b"text/plain"),
-                    (b"content-length", payload_size.as_bytes()),
-                ]);
-                debug!(
-                    "Response headers: {:?} stream: {}",
-                    response_headers, http_stream.identifier
-                );
-
-                // Send buffer header
-                let mut buffer = BytesMut::new();
+                let mut serialize_buffer = BytesMut::with_capacity(8192);
+                let mut headers_vec = vec![(
+                    Bytes::from_static(b":status"),
+                    Bytes::copy_from_slice(response.code.to_string().as_bytes()),
+                )];
+                headers_vec.append(&mut response.headers); // Cheap because of Bytes
+                let header_frame = frames::Headers::new(&headers_vec, response.body.is_none());
                 build_frame_header(
-                    &mut buffer,
-                    FrameType::Headers,
-                    http_stream.identifier,
-                    &response_headers,
+                    &mut serialize_buffer,
+                    frames::FrameType::Headers,
+                    stream_identifer,
+                    &header_frame,
                     Some(encoder),
                 );
-                send_all(stream, &buffer[..]).await?;
 
-                // Send buffer data
-                let mut data_frame = Data::new(get_payload);
-                data_frame.set_flags(0x01);
-                let mut data_buffer = BytesMut::new();
-                build_frame_header(
-                    &mut data_buffer,
-                    FrameType::Data,
-                    http_stream.identifier,
-                    &data_frame,
-                    None,
-                );
-                debug!("Response data: {:?}", data_frame);
+                if let Some(body) = response.body.as_ref() {
+                    if !http_stream.has_room_in_window(body.len() as u32) {
+                        info!(
+                            "Stream {} has not enough room to send response payload",
+                            http_stream.identifier
+                        );
+                        todo!("Handle error");
+                    }
+
+                    http_stream
+                        .consume_space(body.len() as u32)
+                        .expect("Tried to consume space on a too small window");
+                }
+
+                debug!("Send header frame: {:?}", header_frame);
+                send_all(stream, serialize_buffer.as_ref()).await?;
+
+                // // Send buffer data
+                if let Some(body) = response.body {
+                    let mut data_frame = frames::Data::new(body);
+                    data_frame.set_flags(0x01); // END_STREAM
+
+                    serialize_buffer.clear();
+                    build_frame_header(
+                        &mut serialize_buffer,
+                        frames::FrameType::Data,
+                        http_stream.identifier,
+                        &data_frame,
+                        None,
+                    );
+
+                    trace!("Send data frame (len: {})", serialize_buffer.len());
+                    send_all(stream, serialize_buffer.as_ref()).await?;
+                }
 
                 http_stream.mark_as_closed();
-                send_all(stream, &data_buffer[..]).await
+                Ok(())
             }
             RequestType::Delete => todo!(),
             RequestType::Put => todo!(),

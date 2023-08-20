@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use tracing::{error, trace};
 
 use crate::{
@@ -10,18 +10,18 @@ use super::FrameError;
 
 #[derive(Debug, Clone)]
 pub struct Headers {
-    headers: Vec<(Vec<u8>, Vec<u8>)>,
+    headers: Vec<(Bytes, Bytes)>,
     end_stream: bool,
 }
 
 impl Headers {
-    pub fn new(headers: &[(&[u8], &[u8])]) -> Self {
+    pub fn new(headers: &[(Bytes, Bytes)], end_stream: bool) -> Self {
         Self {
             headers: headers
                 .iter()
-                .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map(|(k, v)| (k.clone(), v.clone())) // Bytes are cheap to clone
                 .collect(),
-            end_stream: false,
+            end_stream,
         }
     }
 
@@ -63,7 +63,10 @@ impl Headers {
         let payload_offset = if Self::is_priority(flags) { 5 } else { 0 };
         match decoder.decode(&value[payload_offset..length]) {
             Ok(hds) => Ok(Self {
-                headers: hds,
+                headers: hds
+                    .into_iter()
+                    .map(|(k, v)| (Bytes::from(k), Bytes::from(v)))
+                    .collect(),
                 end_stream: Self::is_end_stream(flags),
             }),
             Err(err) => {
@@ -100,11 +103,7 @@ impl Headers {
 
 impl HttpRequest for Headers {
     fn get_type(&self) -> Result<RequestType, RequestError> {
-        match self
-            .headers
-            .iter()
-            .find(|(k, _)| k.as_slice() == b":method")
-        {
+        match self.headers.iter().find(|(k, _)| k.as_ref() == b":method") {
             Some(kind) => RequestType::try_from(&kind.1[..]),
             None => Err(RequestError::MalformedRequest),
         }
@@ -113,7 +112,7 @@ impl HttpRequest for Headers {
     fn get_uri(&self) -> Result<&[u8], RequestError> {
         self.headers
             .iter()
-            .find(|(k, _)| k.as_slice() == b":path")
+            .find(|(k, _)| k.as_ref() == b":path")
             .map(|v| &v.1[..])
             .ok_or(RequestError::MalformedRequest)
     }
@@ -134,6 +133,6 @@ impl ResponseSerialize for Headers {
     }
 
     fn get_flags(&self) -> u8 {
-        0x04
+        0x04 | if self.end_stream { 0x01 } else { 0x00 }
     }
 }

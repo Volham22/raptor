@@ -9,6 +9,7 @@ edition = "2021"
 bytes = "1.4.0"
 chrono = "0.4.26"
 hpack = "0.3.0"
+mime_guess = "2.0.4"
 rustls-pemfile = "1"
 thiserror = "1.0.44"
 tokio = { version = "1.29.1", features = ["full"]}
