@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, path::Path};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::net::TcpStream;
@@ -38,6 +38,7 @@ pub async fn respond_request(
     stream: &mut TlsStream<TcpStream>,
     stream_identifer: u32,
     stream_manager: &mut StreamManager,
+    root_dir: &Path,
     encoder: &mut hpack::Encoder<'_>,
 ) -> io::Result<()> {
     let headers = stream_manager
@@ -49,7 +50,7 @@ pub async fn respond_request(
     match headers.get_type() {
         Ok(kind) => match kind {
             RequestType::Get => {
-                let mut response = handle_request(headers).await;
+                let mut response = handle_request(headers, root_dir).await;
                 let http_stream = stream_manager.get_at_mut(stream_identifer).unwrap();
 
                 let mut serialize_buffer = BytesMut::with_capacity(8192);
