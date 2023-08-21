@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, path::Path};
 
 use bytes::{Buf, BufMut, BytesMut};
 use thiserror::Error;
@@ -241,6 +241,7 @@ async fn send_go_away(stream: &mut TlsStream<TcpStream>, err: ConnectionError) -
 
 pub async fn do_connection_loop(
     stream: &mut TlsStream<TcpStream>,
+    root_dir: &Path,
     mut buffer: BytesMut,
 ) -> ConnectionResult<()> {
     let mut decoder = hpack::Decoder::new();
@@ -365,6 +366,7 @@ pub async fn do_connection_loop(
                             stream,
                             frame.stream_identifier,
                             &mut stream_manager,
+                            root_dir,
                             &mut encoder,
                         )
                         .await
@@ -471,7 +473,11 @@ pub async fn do_connection_loop(
         }
     }
 }
-pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) -> io::Result<()> {
+pub async fn do_connection(
+    ssl_socket: TlsAcceptor,
+    client_socket: TcpStream,
+    root_dir: &Path,
+) -> io::Result<()> {
     let mut buffer = BytesMut::new();
     let mut stream = ssl_socket.accept(client_socket).await?;
     let _ = stream.read_buf(&mut buffer).await?; // read connection preface
@@ -482,12 +488,10 @@ pub async fn do_connection(ssl_socket: TlsAcceptor, client_socket: TcpStream) ->
 
     buffer.advance(preface_offset); // consume connection preface in buffer
     match send_server_setting(&mut stream).await {
-        Ok(()) => {
-            info!("Connection terminated.");
-        }
+        Ok(()) => (),
         Err(ConnectionError::IOError(e)) => return Err(e),
         Err(err) => send_go_away(&mut stream, err).await?,
     }
 
-    connection_error_to_io_error!(do_connection_loop(&mut stream, buffer).await, ())
+    connection_error_to_io_error!(do_connection_loop(&mut stream, root_dir, buffer).await, ())
 }

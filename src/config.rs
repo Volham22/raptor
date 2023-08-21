@@ -25,8 +25,12 @@ pub struct CliConfig {
 pub enum ConfigError {
     #[error("Bad Yaml: {0:?}")]
     BadYaml(serde_yaml::Error),
-    #[error("Error while reading config file: {0}")]
+    #[error("Error while reading config file: '{0}'")]
     ReadError(io::Error),
+    #[error("Root path is a file: '{0}'")]
+    RootFolderIsAFile(path::PathBuf),
+    #[error("Root path is not absolute: '{0}'")]
+    RootPathNotAbsolute(path::PathBuf),
 }
 
 #[derive(Clone, Deserialize)]
@@ -35,6 +39,7 @@ pub struct Config {
     pub port: u16,
     pub cert_path: path::PathBuf,
     pub key_path: path::PathBuf,
+    pub root_dir: path::PathBuf,
 }
 
 pub async fn read_config_from_file(path: &path::Path) -> Result<String, ConfigError> {
@@ -46,6 +51,16 @@ pub async fn read_config_from_file(path: &path::Path) -> Result<String, ConfigEr
 
 impl Config {
     pub fn from_yaml_str(config: &str) -> Result<Config, ConfigError> {
-        serde_yaml::from_str(config).map_err(ConfigError::BadYaml)
+        let result: Config = serde_yaml::from_str(config).map_err(ConfigError::BadYaml)?;
+
+        if result.root_dir.is_file() {
+            return Err(ConfigError::RootFolderIsAFile(result.root_dir));
+        }
+
+        if result.root_dir.is_relative() {
+            return Err(ConfigError::RootPathNotAbsolute(result.root_dir));
+        }
+
+        Ok(result)
     }
 }

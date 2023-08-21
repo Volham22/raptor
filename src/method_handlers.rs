@@ -8,10 +8,10 @@ use crate::{
     response::Response,
 };
 
-pub async fn handle_request<T: HttpRequest>(req: &T) -> Response {
+pub async fn handle_request<T: HttpRequest>(req: &T, root_dir: &Path) -> Response {
     match req.get_type().expect("Tried to handle invalid request") {
         RequestType::Get => Response::from_io_result(
-            handle_get(req).await,
+            handle_get(req, root_dir).await,
             Path::new(String::from_utf8_lossy(req.get_uri().unwrap()).as_ref())
                 .extension()
                 .map(|s| s.to_str().unwrap())
@@ -23,10 +23,17 @@ pub async fn handle_request<T: HttpRequest>(req: &T) -> Response {
     }
 }
 
-async fn handle_get<T: HttpRequest>(req: &T) -> io::Result<Vec<u8>> {
-    let path = format!(".{}", String::from_utf8_lossy(req.get_uri().unwrap()));
-    let get_path = Path::new(&path);
-    debug!("Path: {:?}", get_path);
+async fn handle_get<T: HttpRequest>(req: &T, root_dir: &Path) -> io::Result<Vec<u8>> {
+    let uri = req.get_uri().unwrap();
+    let path = root_dir.join(Path::new(
+        &String::from_utf8_lossy(if uri.starts_with(b"/") {
+            &uri[1..]
+        } else {
+            uri
+        })
+        .as_ref(),
+    ));
+    debug!("Path: {:?}", path);
 
-    fs::read(get_path).await
+    fs::read(path).await
 }
