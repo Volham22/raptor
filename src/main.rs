@@ -1,11 +1,12 @@
 use std::{
     fs::File,
     io::{self, BufReader},
-    net::ToSocketAddrs,
+    net::SocketAddr,
     path::Path,
     sync::Arc,
 };
 
+use clap::Parser;
 use connection::do_connection;
 use rustls_pemfile::{certs, rsa_private_keys};
 use tokio::net::TcpListener;
@@ -13,8 +14,9 @@ use tokio_rustls::{
     rustls::{self, Certificate, PrivateKey},
     TlsAcceptor,
 };
-use tracing::{debug, info, warn, Level};
+use tracing::{debug, error, info, warn};
 
+mod config;
 mod connection;
 mod http2;
 mod method_handlers;
@@ -39,18 +41,33 @@ fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    let cli_conf = config::CliConfig::parse();
     tracing_subscriber::fmt()
-        .with_max_level(Level::TRACE)
+        .with_max_level(cli_conf.level)
         .init();
+
+    let config_file_content = match config::read_config_from_file(&cli_conf.config).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("{}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let conf = match config::Config::from_yaml_str(&config_file_content) {
+        Ok(c) => c,
+        Err(err) => {
+            error!("{:?}", err);
+            std::process::exit(1);
+        }
+    };
+
     info!("Begin of server");
 
-    let addr = "127.0.0.1:8000"
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| io::Error::from(io::ErrorKind::AddrNotAvailable))?;
+    let addr = SocketAddr::new(conf.ip, conf.port);
     debug!("Created sockaddr");
-    let certs = load_certs(Path::new("cert.pem"))?;
-    let mut keys = load_keys(Path::new("private_key.pem"))?;
+    let certs = load_certs(&conf.cert_path)?;
+    let mut keys = load_keys(&conf.key_path)?;
     debug!("Loaded certs and private key");
 
     let mut config = rustls::ServerConfig::builder()
