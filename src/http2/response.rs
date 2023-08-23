@@ -1,4 +1,4 @@
-use std::{io, path::Path};
+use std::{io, sync::Arc};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::net::TcpStream;
@@ -6,6 +6,7 @@ use tokio_rustls::server::TlsStream;
 use tracing::{debug, info, trace};
 
 use crate::{
+    config::Config,
     connection::{connection_error_to_io_error, send_all},
     method_handlers::handle_request,
     request::{HttpRequest, RequestType},
@@ -38,7 +39,7 @@ pub async fn respond_request(
     stream: &mut TlsStream<TcpStream>,
     stream_identifer: u32,
     stream_manager: &mut StreamManager,
-    root_dir: &Path,
+    config: &Arc<Config>,
     encoder: &mut hpack::Encoder<'_>,
 ) -> io::Result<()> {
     let headers = stream_manager
@@ -50,7 +51,7 @@ pub async fn respond_request(
     match headers.get_type() {
         Ok(kind) => match kind {
             RequestType::Get => {
-                let mut response = handle_request(headers, root_dir).await;
+                let mut response = handle_request(headers, config).await;
                 let http_stream = stream_manager.get_at_mut(stream_identifer).unwrap();
 
                 let mut serialize_buffer = BytesMut::with_capacity(8192);
