@@ -12,9 +12,9 @@ pub struct Response {
 }
 
 impl Response {
-    pub fn from_io_result(value: io::Result<Vec<u8>>, extension: &str) -> Self {
+    pub fn from_io_result(value: io::Result<Option<Vec<u8>>>, extension: &str) -> Self {
         match value {
-            Ok(body) => Self {
+            Ok(Some(body)) => Self {
                 code: 200,
                 headers: vec![
                     (
@@ -42,6 +42,31 @@ impl Response {
                     ),
                 ],
                 body: Some(body),
+            },
+            Ok(None) => Self {
+                code: 200,
+                headers: vec![
+                    (
+                        Bytes::from_static(b"content-type"),
+                        Bytes::from(
+                            mime_guess::from_ext(extension)
+                                .first_raw()
+                                .unwrap_or("text/plain")
+                                .as_bytes(),
+                        ),
+                    ),
+                    (
+                        Bytes::from_static(b"date"),
+                        Bytes::copy_from_slice(
+                            format!("{}", chrono::Utc::now().format(DATE_FMT_STR)).as_bytes(),
+                        ),
+                    ),
+                    (
+                        Bytes::from_static(b"server"),
+                        Bytes::from_static(SERVER_NAME),
+                    ),
+                ],
+                body: None,
             },
             Err(err) => match err.kind() {
                 io::ErrorKind::NotFound => Self {

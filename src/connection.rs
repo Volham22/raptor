@@ -1,4 +1,4 @@
-use std::{io, path::Path};
+use std::{io, sync::Arc};
 
 use bytes::{Buf, BufMut, BytesMut};
 use thiserror::Error;
@@ -9,11 +9,14 @@ use tokio::{
 use tokio_rustls::{server::TlsStream, TlsAcceptor};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::http2::{
-    check_connection_preface,
-    frames::{self, Frame, FrameType, FRAME_HEADER_LENGTH},
-    response::{build_frame_header, respond_request, ResponseSerialize},
-    stream::StreamManager,
+use crate::{
+    config::Config,
+    http2::{
+        check_connection_preface,
+        frames::{self, Frame, FrameType, FRAME_HEADER_LENGTH},
+        response::{build_frame_header, respond_request, ResponseSerialize},
+        stream::StreamManager,
+    },
 };
 
 macro_rules! connection_error_to_io_error {
@@ -241,7 +244,7 @@ async fn send_go_away(stream: &mut TlsStream<TcpStream>, err: ConnectionError) -
 
 pub async fn do_connection_loop(
     stream: &mut TlsStream<TcpStream>,
-    root_dir: &Path,
+    conf: &Arc<Config>,
     mut buffer: BytesMut,
 ) -> ConnectionResult<()> {
     let mut decoder = hpack::Decoder::new();
@@ -366,7 +369,7 @@ pub async fn do_connection_loop(
                             stream,
                             frame.stream_identifier,
                             &mut stream_manager,
-                            root_dir,
+                            conf,
                             &mut encoder,
                         )
                         .await
@@ -476,7 +479,7 @@ pub async fn do_connection_loop(
 pub async fn do_connection(
     ssl_socket: TlsAcceptor,
     client_socket: TcpStream,
-    root_dir: &Path,
+    config: Arc<Config>,
 ) -> io::Result<()> {
     let mut buffer = BytesMut::new();
     let mut stream = ssl_socket.accept(client_socket).await?;
@@ -493,5 +496,5 @@ pub async fn do_connection(
         Err(err) => send_go_away(&mut stream, err).await?,
     }
 
-    connection_error_to_io_error!(do_connection_loop(&mut stream, root_dir, buffer).await, ())
+    connection_error_to_io_error!(do_connection_loop(&mut stream, &config, buffer).await, ())
 }

@@ -1,9 +1,11 @@
-use std::{io, net::IpAddr, path};
+use std::{io, net::IpAddr, path, str::FromStr};
 
 use clap::Parser;
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::fs;
+
+const DEFAULT_VALUE_DEFAULT_FILE: &str = "index.html";
 
 #[derive(Parser)]
 #[command(name = "raptor")]
@@ -31,6 +33,8 @@ pub enum ConfigError {
     RootFolderIsAFile(path::PathBuf),
     #[error("Root path is not absolute: '{0}'")]
     RootPathNotAbsolute(path::PathBuf),
+    #[error("Default file is absolute: '{0}'")]
+    AbsoluteDefaultFile(path::PathBuf),
 }
 
 #[derive(Clone, Deserialize)]
@@ -40,6 +44,7 @@ pub struct Config {
     pub cert_path: path::PathBuf,
     pub key_path: path::PathBuf,
     pub root_dir: path::PathBuf,
+    pub default_file: Option<path::PathBuf>,
 }
 
 pub async fn read_config_from_file(path: &path::Path) -> Result<String, ConfigError> {
@@ -61,6 +66,18 @@ impl Config {
             return Err(ConfigError::RootPathNotAbsolute(result.root_dir));
         }
 
+        if let Some(default_file) = result.default_file.as_ref() {
+            if default_file.is_absolute() {
+                return Err(ConfigError::AbsoluteDefaultFile(default_file.clone()));
+            }
+        }
+
         Ok(result)
+    }
+
+    pub fn get_default_file(&self) -> path::PathBuf {
+        self.default_file
+            .clone()
+            .unwrap_or(path::PathBuf::from_str(DEFAULT_VALUE_DEFAULT_FILE).expect("unreachable"))
     }
 }

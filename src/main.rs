@@ -55,7 +55,7 @@ async fn main() -> io::Result<()> {
     };
 
     let conf = match config::Config::from_yaml_str(&config_file_content) {
-        Ok(c) => c,
+        Ok(c) => Arc::new(c),
         Err(err) => {
             error!("Error while loading configuration file: {}", err);
             std::process::exit(1);
@@ -89,13 +89,13 @@ async fn main() -> io::Result<()> {
         let (client_socket, client_addr) = listener_socket.accept().await?;
         let acceptor = acceptor.clone();
         info!("New client connection from {client_addr:?}");
-        let root_dir = conf.root_dir.clone();
+        let thread_conf = conf.clone();
 
         tokio::spawn(async move {
             info!("Started connection handling for {client_addr:?}");
             let fut = async move {
                 client_socket.set_nodelay(true)?;
-                do_connection(acceptor, client_socket, &root_dir).await
+                do_connection(acceptor, client_socket, thread_conf).await
             };
 
             if let Err(err) = fut.await {
