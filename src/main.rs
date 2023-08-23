@@ -1,14 +1,8 @@
-use std::{
-    fs::File,
-    io::{self, BufReader},
-    net::SocketAddr,
-    path::Path,
-    sync::Arc,
-};
+use std::{fs::File, io, net::SocketAddr, path::Path, sync::Arc};
 
 use clap::Parser;
 use connection::do_connection;
-use rustls_pemfile::{certs, rsa_private_keys};
+use rustls_pemfile::{read_all, rsa_private_keys};
 use tokio::net::TcpListener;
 use tokio_rustls::{
     rustls::{self, Certificate, PrivateKey},
@@ -24,16 +18,27 @@ mod request;
 mod response;
 
 fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
-    let mut cert_buffer = BufReader::new(File::open(path)?);
+    let mut cert_buffer = io::BufReader::new(File::open(path)?);
 
-    certs(&mut cert_buffer)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid cert file"))
-        .map(|mut certs| certs.drain(..).map(Certificate).collect())
+    Ok(read_all(&mut cert_buffer)?
+        .into_iter()
+        .map(|c| match c {
+            rustls_pemfile::Item::X509Certificate(bytes) => Certificate(bytes),
+            _ => {
+                error!(
+                    "Invalid certificate found in pem file: {}",
+                    path.to_str().unwrap()
+                );
+                std::process::exit(1);
+            }
+        })
+        .collect())
 }
 
 fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
-    let mut key_buffer = BufReader::new(File::open(path)?);
+    let mut key_buffer = io::BufReader::new(File::open(path)?);
 
+    // TODO: Allow all type of private key
     rsa_private_keys(&mut key_buffer)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid key file"))
         .map(|mut keys| keys.drain(..).map(PrivateKey).collect())
