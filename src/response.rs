@@ -8,11 +8,11 @@ const SERVER_NAME: &[u8; 6] = b"raptor";
 pub struct Response {
     pub code: u16,
     pub headers: Vec<(Bytes, Bytes)>,
-    pub body: Option<Vec<u8>>,
+    pub body: Option<Bytes>,
 }
 
 impl Response {
-    pub fn from_io_result(value: io::Result<Option<Vec<u8>>>, extension: &str) -> Self {
+    pub fn from_io_result(value: io::Result<Option<Bytes>>, extension: &str) -> Self {
         match value {
             Ok(Some(body)) => Self {
                 code: 200,

@@ -39,6 +39,7 @@ pub async fn respond_request(
     stream: &mut TlsStream<TcpStream>,
     stream_identifer: u32,
     stream_manager: &mut StreamManager,
+    max_frame_size: usize,
     config: &Arc<Config>,
     encoder: &mut hpack::Encoder<'_>,
 ) -> io::Result<()> {
@@ -69,19 +70,19 @@ pub async fn respond_request(
                     Some(encoder),
                 );
 
-                if let Some(body) = response.body.as_ref() {
-                    if !http_stream.has_room_in_window(body.len() as u32) {
-                        info!(
-                            "Stream {} has not enough room to send response payload",
-                            http_stream.identifier
-                        );
-                        todo!("Handle error");
-                    }
-
-                    http_stream
-                        .consume_space(body.len() as u32)
-                        .expect("Tried to consume space on a too small window");
-                }
+                // if let Some(body) = response.body.as_ref() {
+                //     if !http_stream.has_room_in_window(body.len() as u32) {
+                //         info!(
+                //             "Stream {} has not enough room to send response payload",
+                //             http_stream.identifier
+                //         );
+                //         todo!("Handle error");
+                //     }
+                //
+                //     http_stream
+                //         .consume_space(body.len() as u32)
+                //         .expect("Tried to consume space on a too small window");
+                // }
 
                 debug!("Send header frame: {:?}", header_frame);
                 connection_error_to_io_error!(
@@ -91,23 +92,35 @@ pub async fn respond_request(
 
                 // // Send buffer data
                 if let Some(body) = response.body {
-                    let mut data_frame = frames::Data::new(body);
-                    data_frame.set_flags(0x01); // END_STREAM
+                    let data_frame_count = body.chunks(max_frame_size).count();
+                    for (i, chunk) in body.chunks(max_frame_size).enumerate() {
+                        let mut data_frame = frames::Data::new(Bytes::copy_from_slice(chunk));
+                        data_frame.set_flags(if i + 1 == data_frame_count {
+                            0x01
+                        } else {
+                            0x00
+                        }); // END_STREAM if this is the last data frame
 
-                    serialize_buffer.clear();
-                    build_frame_header(
-                        &mut serialize_buffer,
-                        frames::FrameType::Data,
-                        http_stream.identifier,
-                        &data_frame,
-                        None,
-                    );
+                        serialize_buffer.clear();
+                        build_frame_header(
+                            &mut serialize_buffer,
+                            frames::FrameType::Data,
+                            http_stream.identifier,
+                            &data_frame,
+                            None,
+                        );
 
-                    trace!("Send data frame (len: {})", serialize_buffer.len());
-                    connection_error_to_io_error!(
-                        send_all(stream, serialize_buffer.as_ref()).await,
-                        ()
-                    )?;
+                        trace!(
+                            "Send data frame ({}/{}) for stream {stream_identifer} (total len: {})",
+                            i + 1,
+                            data_frame_count,
+                            body.len(),
+                        );
+                        connection_error_to_io_error!(
+                            send_all(stream, serialize_buffer.as_ref()).await,
+                            ()
+                        )?;
+                    }
                 }
 
                 http_stream.mark_as_closed();

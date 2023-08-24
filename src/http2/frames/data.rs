@@ -1,13 +1,15 @@
+use bytes::Bytes;
+
 use crate::http2::response::ResponseSerialize;
 
 #[derive(Debug)]
 pub struct Data {
-    payload: Vec<u8>,
+    payload: Bytes,
     flags: u8,
 }
 
 impl Data {
-    pub fn new(payload: Vec<u8>) -> Self {
+    pub fn new(payload: Bytes) -> Self {
         Self { payload, flags: 0 }
     }
 
@@ -26,7 +28,7 @@ impl Data {
 
 impl ResponseSerialize for Data {
     fn serialize_response(&self, _: Option<&mut hpack::Encoder>) -> Vec<u8> {
-        self.payload.clone()
+        self.payload.to_vec()
     }
 
     fn compute_frame_length(&self, _: Option<&mut hpack::Encoder>) -> u32 {
