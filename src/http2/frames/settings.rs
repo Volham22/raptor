@@ -5,10 +5,12 @@ use tracing::warn;
 
 use crate::http2::response::ResponseSerialize;
 
+use super::DEFAULT_MAX_FRAME_SIZE;
+
 const TUPLE_LENGTH: usize = size_of::<u16>() + size_of::<u32>();
 
 #[repr(u16)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SettingKind {
     HeaderTableSize = 1,
     EnablePush = 2,
@@ -92,6 +94,14 @@ impl Settings {
             is_ack: true,
             flags: Vec::new(),
         }
+    }
+
+    pub fn get_max_frame_size(&self) -> u32 {
+        self.flags
+            .iter()
+            .find(|f| f.0 == SettingKind::MaxFrameSize)
+            .map(|f| f.1) // map to value
+            .unwrap_or(DEFAULT_MAX_FRAME_SIZE)
     }
 }
 

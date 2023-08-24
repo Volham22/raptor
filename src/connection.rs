@@ -250,6 +250,7 @@ pub async fn do_connection_loop(
     let mut decoder = hpack::Decoder::new();
     let mut encoder = hpack::Encoder::new();
     let mut stream_manager = StreamManager::new();
+    let mut max_frame_size: u32 = frames::DEFAULT_MAX_FRAME_SIZE;
 
     loop {
         let frame_result = Frame::try_from(buffer.as_ref());
@@ -306,6 +307,12 @@ pub async fn do_connection_loop(
                 )
                 .expect("Failed to parse settings");
                 info!("settings: {:?}", settings);
+
+                let setting_frame_size = settings.get_max_frame_size();
+                if setting_frame_size != max_frame_size {
+                    trace!("Set new max frame size to: {}", setting_frame_size);
+                    max_frame_size = setting_frame_size;
+                }
 
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
                 let mut ack_buffer = BytesMut::with_capacity(
@@ -369,6 +376,7 @@ pub async fn do_connection_loop(
                             stream,
                             frame.stream_identifier,
                             &mut stream_manager,
+                            max_frame_size as usize,
                             conf,
                             &mut encoder,
                         )
