@@ -201,7 +201,7 @@ impl Stream {
             let mut data_frame = frames::Data::new(Bytes::copy_from_slice(chunk));
             let mut data_frame_buffer = BytesMut::with_capacity(FRAME_HEADER_LENGTH + chunk.len());
 
-            data_frame.set_flags(if i + 1 == data_frame_count {
+            data_frame.set_flags(if self.data_to_send.as_ref().unwrap().len() - (data_sent + chunk.len()) == 0 {
                 0x01 // close stream it's the last data frame we'll send
             } else {
                 0x00
