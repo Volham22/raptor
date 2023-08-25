@@ -1,21 +1,6 @@
-use std::{io, sync::Arc};
+use bytes::{BufMut, BytesMut};
 
-use bytes::{BufMut, Bytes, BytesMut};
-use tokio::net::TcpStream;
-use tokio_rustls::server::TlsStream;
-use tracing::{debug, info, trace};
-
-use crate::{
-    config::Config,
-    connection::{connection_error_to_io_error, send_all},
-    method_handlers::handle_request,
-    request::{HttpRequest, RequestType},
-};
-
-use super::{
-    frames::{self},
-    stream::StreamManager,
-};
+use super::frames;
 
 pub fn build_frame_header<T: ResponseSerialize>(
     buffer: &mut BytesMut,
@@ -33,105 +18,6 @@ pub fn build_frame_header<T: ResponseSerialize>(
 
     buffer.put_u32(stream_identifer); // stream identifier
     buffer.put(payload.as_slice());
-}
-
-pub async fn respond_request(
-    stream: &mut TlsStream<TcpStream>,
-    stream_identifer: u32,
-    stream_manager: &mut StreamManager,
-    max_frame_size: usize,
-    config: &Arc<Config>,
-    encoder: &mut hpack::Encoder<'_>,
-) -> io::Result<()> {
-    let headers = stream_manager
-        .get_at(stream_identifer)
-        .unwrap()
-        .get_headers()
-        .unwrap();
-
-    match headers.get_type() {
-        Ok(kind) => match kind {
-            RequestType::Get => {
-                let mut response = handle_request(headers, config).await;
-                let http_stream = stream_manager.get_at_mut(stream_identifer).unwrap();
-
-                let mut serialize_buffer = BytesMut::with_capacity(8192);
-                let mut headers_vec = vec![(
-                    Bytes::from_static(b":status"),
-                    Bytes::copy_from_slice(response.code.to_string().as_bytes()),
-                )];
-                headers_vec.append(&mut response.headers); // Cheap because of Bytes
-                let header_frame = frames::Headers::new(&headers_vec, response.body.is_none());
-                build_frame_header(
-                    &mut serialize_buffer,
-                    frames::FrameType::Headers,
-                    stream_identifer,
-                    &header_frame,
-                    Some(encoder),
-                );
-
-                // if let Some(body) = response.body.as_ref() {
-                //     if !http_stream.has_room_in_window(body.len() as u32) {
-                //         info!(
-                //             "Stream {} has not enough room to send response payload",
-                //             http_stream.identifier
-                //         );
-                //         todo!("Handle error");
-                //     }
-                //
-                //     http_stream
-                //         .consume_space(body.len() as u32)
-                //         .expect("Tried to consume space on a too small window");
-                // }
-
-                debug!("Send header frame: {:?}", header_frame);
-                connection_error_to_io_error!(
-                    send_all(stream, serialize_buffer.as_ref()).await,
-                    ()
-                )?;
-
-                // // Send buffer data
-                if let Some(body) = response.body {
-                    let data_frame_count = body.chunks(max_frame_size).count();
-                    for (i, chunk) in body.chunks(max_frame_size).enumerate() {
-                        let mut data_frame = frames::Data::new(Bytes::copy_from_slice(chunk));
-                        data_frame.set_flags(if i + 1 == data_frame_count {
-                            0x01
-                        } else {
-                            0x00
-                        }); // END_STREAM if this is the last data frame
-
-                        serialize_buffer.clear();
-                        build_frame_header(
-                            &mut serialize_buffer,
-                            frames::FrameType::Data,
-                            http_stream.identifier,
-                            &data_frame,
-                            None,
-                        );
-
-                        trace!(
-                            "Send data frame ({}/{}) for stream {stream_identifer} (total len: {})",
-                            i + 1,
-                            data_frame_count,
-                            body.len(),
-                        );
-                        connection_error_to_io_error!(
-                            send_all(stream, serialize_buffer.as_ref()).await,
-                            ()
-                        )?;
-                    }
-                }
-
-                http_stream.mark_as_closed();
-                Ok(())
-            }
-            RequestType::Delete => todo!(),
-            RequestType::Put => todo!(),
-            RequestType::Head => todo!(),
-        },
-        Err(_) => todo!(),
-    }
 }
 
 pub trait ResponseSerialize {

@@ -5,7 +5,7 @@ use crate::http2::response::ResponseSerialize;
 #[derive(Debug)]
 pub struct Data {
     payload: Bytes,
-    flags: u8,
+    pub flags: u8,
 }
 
 impl Data {

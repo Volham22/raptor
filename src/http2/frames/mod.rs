@@ -4,6 +4,7 @@ mod frame;
 mod go_away;
 mod headers;
 mod ping;
+mod reset_stream;
 mod settings;
 mod window_update;
 
@@ -15,3 +16,4 @@ pub use headers::*;
 pub use ping::*;
 pub use settings::*;
 pub use window_update::*;
+pub use reset_stream::*;

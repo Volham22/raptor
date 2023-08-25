@@ -1,9 +1,25 @@
-use std::collections::HashMap;
+use std::{cmp::min, collections::HashMap, sync::Arc};
 
+use bytes::{Buf, Bytes, BytesMut};
 use thiserror::Error;
+use tokio::net::TcpStream;
+use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, trace};
 
-use super::frames::Headers;
+use crate::{
+    config::Config,
+    connection::{send_all, ConnectionError, ConnectionResult},
+    method_handlers::handle_request,
+    request::{HttpRequest, RequestType},
+};
+
+use super::{
+    frames::{self, FrameError, Headers, FRAME_HEADER_LENGTH},
+    response::build_frame_header,
+};
+
+pub(crate) const INITIAL_WINDOW_SIZE: u32 = 65535;
+const MAX_WINDOW_SIZE: u64 = 2147483647; // 2**31 - 1
 
 #[derive(Debug, PartialEq)]
 enum StreamState {
@@ -23,57 +39,50 @@ impl Default for StreamState {
 }
 
 #[derive(Error, Debug, Clone)]
-pub enum StreamError {
-    #[error("No space left in the current stream window")]
-    NoSpaceLeftInCurrentWindow,
-}
+pub enum StreamError {}
 
 #[derive(Debug, Default)]
 pub struct Stream {
     pub identifier: u32,
-    window_space: u32,
+    window_space: u64,
     state: StreamState,
     request_headers: Option<Headers>,
+    data_to_send: Option<Bytes>,
 }
 
 impl Stream {
-    pub fn new(identifier: u32) -> Self {
+    pub fn new(identifier: u32, initial_window_size: u64) -> Self {
         Self {
             identifier,
-            window_space: u16::MAX as u32,
+            window_space: initial_window_size,
             state: StreamState::default(),
             request_headers: None,
+            data_to_send: None,
         }
     }
 
-    pub fn consume_space(&mut self, space: u32) -> Result<(), StreamError> {
-        if (self.window_space as i64 - space as i64) < 0 {
-            Err(StreamError::NoSpaceLeftInCurrentWindow)
-        } else {
-            debug!(
-                "Consume window space: (before: {}, after: {})",
-                self.window_space,
-                self.window_space - space
-            );
-            self.window_space -= space;
-            Ok(())
-        }
-    }
-
-    pub fn has_room_in_window(&self, size: u32) -> bool {
+    pub fn update_window(&mut self, space: u64) -> Result<(), FrameError> {
         debug!(
-            "Has room in window: (window_space: {}, size: {})",
-            self.window_space, size
+            "stream {}: value after update {} (valid: {})",
+            self.identifier,
+            self.window_space + space,
+            self.window_space + space >= MAX_WINDOW_SIZE
         );
-        self.window_space >= size
+        if self.window_space + space >= MAX_WINDOW_SIZE {
+            error!(
+                "stream {}: Window increase is too big {}",
+                self.identifier,
+                self.window_space + space
+            );
+            return Err(FrameError::WindowUpdateTooBig);
+        }
+
+        self.window_space += space;
+        Ok(())
     }
 
-    pub fn update_window(&mut self, space: u32) {
-        self.window_space = space;
-    }
-
-    pub fn get_headers(&self) -> Option<&Headers> {
-        self.request_headers.as_ref()
+    pub fn has_data_to_send(&self) -> bool {
+        self.data_to_send.is_some()
     }
 
     pub fn set_headers(&mut self, header: Headers) {
@@ -81,10 +90,178 @@ impl Stream {
         self.request_headers = Some(header);
     }
 
-    pub fn mark_as_closed(&mut self) {
+    fn mark_as_closed(&mut self) {
         if self.request_headers.as_ref().unwrap().should_stream_close() {
             trace!("Mark stream {} as closed", self.identifier);
             self.state = StreamState::Closed;
+        }
+    }
+
+    pub async fn respond_to(
+        &mut self,
+        stream: &mut TlsStream<TcpStream>,
+        max_frame_size: usize,
+        global_window_size: &mut u32,
+        config: &Arc<Config>,
+        encoder: &mut hpack::Encoder<'_>,
+    ) -> ConnectionResult<()> {
+        let headers = self.request_headers.as_ref().unwrap();
+
+        match headers.get_type().map_err(|e| {
+            debug!("Bad request received: {:?}", e);
+            ConnectionError::BadRequest
+        })? {
+            RequestType::Get => {
+                let mut response = handle_request(headers, config).await;
+                let mut serialize_buffer = BytesMut::with_capacity(8192);
+                let mut headers_vec = vec![(
+                    Bytes::from_static(b":status"),
+                    Bytes::copy_from_slice(response.code.to_string().as_bytes()),
+                )];
+                headers_vec.append(&mut response.headers); // Cheap because of Bytes
+                let header_frame = frames::Headers::new(&headers_vec, response.body.is_none());
+                build_frame_header(
+                    &mut serialize_buffer,
+                    frames::FrameType::Headers,
+                    self.identifier,
+                    &header_frame,
+                    Some(encoder),
+                );
+
+                trace!("Send response header frame: {:?}", header_frame);
+                send_all(stream, serialize_buffer.as_ref()).await?;
+
+                if let Some(body) = response.body {
+                    self.data_to_send = Some(body);
+                    self.try_send_data_payload(stream, global_window_size, max_frame_size)
+                        .await?;
+                }
+            }
+            _ => todo!("Method not implemented"),
+        };
+
+        Ok(())
+    }
+
+    /// This function tries to send response data the client according to
+    /// the window size. It will send as much data frame as the current window
+    /// space allow.
+    pub async fn try_send_data_payload(
+        &mut self,
+        stream: &mut TlsStream<TcpStream>,
+        global_window_size: &mut u32,
+        max_frame_size: usize,
+    ) -> ConnectionResult<()> {
+        let data_frame_count = self
+            .data_to_send
+            .as_ref()
+            .expect("call Stream::try_send_data_payload without data to send")
+            .chunks(max_frame_size)
+            .count();
+        let mut data_sent = 0usize;
+        let mut window_space = self.window_space;
+
+        if window_space == 0 || *global_window_size == 0 {
+            trace!(
+                "stream {}: Can't receive data yet window is empty (local_window: {}, global_window: {})",
+                self.identifier,
+                window_space,
+                global_window_size
+            );
+            return Ok(());
+        }
+
+        trace!(
+            "stream: {} Try to send payload: max_frame_size: {max_frame_size} local_window_size: {:?} global_window_size: {} remaining_bytes: {}",
+            self.identifier,
+            self.window_space,
+            global_window_size,
+            self.data_to_send.as_ref().unwrap().len(),
+        );
+
+        for (i, chunk) in self
+            .data_to_send
+            .as_ref()
+            .unwrap()
+            .chunks(min(max_frame_size, self.window_space as usize))
+            .enumerate()
+        {
+            trace!(
+                "stream {}: window_space: {window_space:?} chunk_len: {} data_frame_count: {data_frame_count} i: {i}",
+                self.identifier,
+                chunk.len()
+            );
+
+            if (window_space as usize) < chunk.len() || (*global_window_size as usize) < chunk.len()
+            {
+                trace!(
+                    "stream {}: Not enough space in windows yet (needed: {}, local_current_size: {} global_current_size: {})",
+                    self.identifier,
+                    chunk.len(),
+                    window_space,
+                    *global_window_size
+                );
+                self.data_to_send.as_mut().unwrap().advance(data_sent);
+                self.window_space = window_space;
+                return Ok(());
+            } else {
+                window_space -= chunk.len() as u64;
+                *global_window_size -= chunk.len() as u32;
+            }
+
+            let mut data_frame = frames::Data::new(Bytes::copy_from_slice(chunk));
+            let mut data_frame_buffer = BytesMut::with_capacity(FRAME_HEADER_LENGTH + chunk.len());
+
+            data_frame.set_flags(
+                if self.data_to_send.as_ref().unwrap().len() - (data_sent + chunk.len()) == 0 {
+                    0x01 // close stream it's the last data frame we'll send
+                } else {
+                    0x00
+                },
+            );
+
+            debug!(
+                "stream {}: Data frame flags {}",
+                self.identifier, data_frame.flags
+            );
+            build_frame_header(
+                &mut data_frame_buffer,
+                frames::FrameType::Data,
+                self.identifier,
+                &data_frame,
+                None,
+            );
+
+            send_all(stream, data_frame_buffer.as_ref()).await?;
+            data_sent += chunk.len();
+            trace!(
+                "stream {}: Send data frame {}/{} remaining bytes: {}",
+                self.identifier,
+                i + 1,
+                data_frame_count,
+                self.data_to_send.as_ref().unwrap().len() - data_sent
+            );
+        }
+
+        self.data_to_send.as_mut().unwrap().advance(data_sent);
+        // At this point all the payload has been sent to the client.
+        // We can now close the stream and set the remaining payload to send as
+        // None
+        assert!(!self.data_to_send.as_ref().unwrap().has_remaining());
+        self.data_to_send = None;
+        debug!("Stream {}: sent {}", self.identifier, data_sent);
+        self.mark_as_closed();
+
+        Ok(())
+    }
+
+    pub fn reset(&mut self, initial_window_size: u64) {
+        self.window_space = initial_window_size;
+        self.mark_as_closed();
+        self.request_headers = None;
+
+        if self.data_to_send.is_some() {
+            self.data_to_send = None;
         }
     }
 }
@@ -92,13 +269,37 @@ impl Stream {
 #[derive(Debug)]
 pub struct StreamManager {
     streams: HashMap<u32, Stream>,
+    initial_window_size: u32,
 }
 
 impl StreamManager {
     pub fn new() -> Self {
         Self {
             streams: HashMap::new(),
+            initial_window_size: INITIAL_WINDOW_SIZE,
         }
+    }
+
+    pub fn set_initial_window_size(&mut self, size: u32) {
+        self.initial_window_size = size;
+    }
+
+    pub async fn try_send_data_all_stream(
+        &mut self,
+        tls_stream: &mut TlsStream<TcpStream>,
+        global_window_size: &mut u32,
+        max_frame_size: usize,
+    ) -> ConnectionResult<()> {
+        for stream in self.streams.iter_mut() {
+            if stream.1.has_data_to_send() {
+                stream
+                    .1
+                    .try_send_data_payload(tls_stream, global_window_size, max_frame_size)
+                    .await?;
+            }
+        }
+
+        Ok(())
     }
 
     // pub fn create_new_stream(&mut self) {
@@ -117,16 +318,6 @@ impl StreamManager {
         self.streams.contains_key(&index)
     }
 
-    pub fn get_at(&self, index: u32) -> Option<&Stream> {
-        match self.streams.get(&index) {
-            Some(s) => Some(s),
-            None => {
-                tracing::warn!("Tried to get an unregistered stream {}", index);
-                None
-            }
-        }
-    }
-
     pub fn get_at_mut(&mut self, index: u32) -> Option<&mut Stream> {
         match self.streams.get_mut(&index) {
             Some(s) => Some(s),
@@ -139,6 +330,11 @@ impl StreamManager {
 
     pub fn register_new_stream(&mut self, index: u32) {
         trace!("Register new stream at index: {index}");
-        self.streams.insert(index, Stream::new(index));
+        self.streams
+            .insert(index, Stream::new(index, self.initial_window_size as u64));
+    }
+
+    pub fn get_initial_window_size(&self) -> u64 {
+        self.initial_window_size.into()
     }
 }

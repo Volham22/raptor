@@ -14,7 +14,7 @@ use crate::{
     http2::{
         check_connection_preface,
         frames::{self, Frame, FrameType, FRAME_HEADER_LENGTH},
-        response::{build_frame_header, respond_request, ResponseSerialize},
+        response::{build_frame_header, ResponseSerialize},
         stream::StreamManager,
     },
 };
@@ -63,18 +63,22 @@ pub enum ConnectionError {
     ZeroWindowUpdate,
     #[error("Window update frame lenght is incorrect: ({0} != 4)")]
     BadLengthWindowUpdate(u32),
+    #[error("Bad request received")]
+    BadRequest,
+    #[error("Bad connection preface")]
+    BadConnectionPreface,
+    #[error("Window update too big")]
+    WindowUpdateTooBig,
 }
 
-type ConnectionResult<T> = Result<T, ConnectionError>;
+pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
 
 pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> ConnectionResult<()> {
-    let mut sent_data = 0usize;
-
-    while sent_data < data.len() {
-        sent_data += stream.write(data).await.map_err(ConnectionError::IOError)?;
-    }
-
-    Ok(())
+    stream
+        .write_all(data)
+        .await
+        .map(|_| ())
+        .map_err(ConnectionError::IOError)
 }
 
 async fn send_server_setting(stream: &mut TlsStream<TcpStream>) -> ConnectionResult<()> {
@@ -219,27 +223,38 @@ async fn receive_continuation_frames(
         .map_err(ConnectionError::InvalidHeaderFrame)
 }
 
+async fn send_reset_stream(
+    stream: &mut TlsStream<TcpStream>,
+    stream_id: u32,
+    err: ConnectionError,
+) -> io::Result<()> {
+    warn!("Send reset stream (id={}): {:?}", stream_id, err);
+    let error_type: frames::ErrorType = err.into();
+    let frame = frames::ResetStream::new(error_type.into());
+    let mut buffer =
+        BytesMut::with_capacity(FRAME_HEADER_LENGTH + frame.compute_frame_length(None) as usize);
+    build_frame_header(
+        &mut buffer,
+        frames::FrameType::ResetStream,
+        stream_id,
+        &frame,
+        None,
+    );
+
+    connection_error_to_io_error!(send_all(stream, buffer.as_ref()).await, ())
+}
+
 async fn send_go_away(stream: &mut TlsStream<TcpStream>, err: ConnectionError) -> io::Result<()> {
     error!("Send GoAway frame {:?}", err);
 
-    let error_type = match err {
-        ConnectionError::IOError(_) => unreachable!(),
-        ConnectionError::NonZeroSettingsAckLength
-        | ConnectionError::BadLengthWindowUpdate(_)
-        | ConnectionError::SettingsLengthNotMultipleOf6 => frames::ErrorType::FrameSizeError,
-        _ => frames::ErrorType::ProtocolError,
-    };
-
+    let error_type: frames::ErrorType = err.into();
     let frame = frames::GoAway::new(error_type, 0, error_type.to_string().as_bytes().to_vec());
     let mut buffer =
         BytesMut::with_capacity(FRAME_HEADER_LENGTH + frame.compute_frame_length(None) as usize);
 
     build_frame_header(&mut buffer, frames::FrameType::GoAway, 0, &frame, None);
-    match send_all(stream, &buffer).await {
-        Ok(()) => Ok(()),
-        Err(ConnectionError::IOError(e)) => Err(e),
-        Err(_) => unreachable!(),
-    }
+
+    connection_error_to_io_error!(send_all(stream, &buffer).await, ())
 }
 
 pub async fn do_connection_loop(
@@ -251,6 +266,7 @@ pub async fn do_connection_loop(
     let mut encoder = hpack::Encoder::new();
     let mut stream_manager = StreamManager::new();
     let mut max_frame_size: u32 = frames::DEFAULT_MAX_FRAME_SIZE;
+    let mut global_window_size: u32 = 65535;
 
     loop {
         let frame_result = Frame::try_from(buffer.as_ref());
@@ -259,11 +275,17 @@ pub async fn do_connection_loop(
             Err(msg) => {
                 warn!("Bad frame: {msg}");
                 trace!("Continue to read, the frame might be not fully received");
-                let _ = stream
+                let count = stream
                     .read_buf(&mut buffer)
                     .await
                     .map_err(ConnectionError::IOError)?;
-                continue;
+
+                if count == 0 {
+                    error!("Remote closed connection.");
+                    break;
+                } else {
+                    continue;
+                }
             }
         };
 
@@ -289,29 +311,42 @@ pub async fn do_connection_loop(
                         return Err(ConnectionError::NonZeroSettingsAckLength);
                     }
 
-                    if frame.length % 6 != 0 {
-                        error!(
-                            "Settings length is not a multiple of 6! (size: {})",
-                            frame.length
-                        );
-                        return Err(ConnectionError::SettingsLengthNotMultipleOf6);
-                    }
-
                     buffer.advance(FRAME_HEADER_LENGTH); // consume current frame
                     continue;
                 }
 
-                let settings = frames::Settings::from_bytes(
+                let settings = match frames::Settings::from_bytes(
                     &buffer[FRAME_HEADER_LENGTH..],
                     frame.length as usize,
-                )
-                .expect("Failed to parse settings");
+                ) {
+                    Ok(s) => s,
+                    Err(frames::FrameError::BadFrameSize(s)) => {
+                        trace!("Bad settings frame size: {s}");
+                        let _ = stream
+                            .read_buf(&mut buffer)
+                            .await
+                            .map_err(ConnectionError::IOError)?;
+                        continue;
+                    }
+                    Err(frames::FrameError::SettingsFrameSize(_)) => {
+                        return Err(ConnectionError::SettingsLengthNotMultipleOf6);
+                    }
+                    Err(_) => {
+                        return Err(ConnectionError::InvalidFrame);
+                    }
+                };
+
                 info!("settings: {:?}", settings);
 
                 let setting_frame_size = settings.get_max_frame_size();
                 if setting_frame_size != max_frame_size {
                     trace!("Set new max frame size to: {}", setting_frame_size);
                     max_frame_size = setting_frame_size;
+                }
+
+                if let Some(size) = settings.get_initial_window_size() {
+                    trace!("Change initial window size to {size}");
+                    stream_manager.set_initial_window_size(size);
                 }
 
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
@@ -328,11 +363,21 @@ pub async fn do_connection_loop(
                 send_all(stream, &ack_buffer[..]).await?;
             }
             FrameType::WindowUpdate => {
-                let window_update = frames::WindowUpdate::from_bytes(
+                let window_update = match frames::WindowUpdate::from_bytes(
                     &buffer[FRAME_HEADER_LENGTH..],
                     frame.length as usize,
-                )
-                .map_err(|_| ConnectionError::InvalidFrame)?;
+                ) {
+                    Ok(wu) => wu,
+                    Err(frames::FrameError::BadFrameSize(_)) => {
+                        let _ = stream
+                            .read_buf(&mut buffer)
+                            .await
+                            .map_err(ConnectionError::IOError)?;
+                        continue;
+                    }
+                    Err(_) => return Err(ConnectionError::InvalidFrame),
+                };
+
                 info!("Window update: {:?}", window_update);
 
                 // See RFC 9113
@@ -347,15 +392,99 @@ pub async fn do_connection_loop(
                 }
 
                 match stream_manager.get_at_mut(frame.stream_identifier) {
-                    Some(st) => st.update_window(window_update.0),
+                    Some(st) if st.identifier == 0 => {
+                        global_window_size += window_update.0;
+                        trace!("Global window is now at {global_window_size}");
+                        match st.update_window(window_update.0 as u64) {
+                            Err(_) if frame.stream_identifier == 0 => {
+                                return Err(ConnectionError::WindowUpdateTooBig);
+                            }
+                            Err(_) => {
+                                send_reset_stream(
+                                    stream,
+                                    frame.stream_identifier,
+                                    ConnectionError::WindowUpdateTooBig,
+                                )
+                                .await
+                                .map_err(ConnectionError::IOError)?;
+                                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+                                continue;
+                            }
+                            Ok(()) => (),
+                        };
+                    }
+                    Some(st) => {
+                        match st.update_window(window_update.0 as u64) {
+                            Err(_) if frame.stream_identifier == 0 => {
+                                return Err(ConnectionError::WindowUpdateTooBig);
+                            }
+                            Err(_) => {
+                                send_reset_stream(
+                                    stream,
+                                    frame.stream_identifier,
+                                    ConnectionError::WindowUpdateTooBig,
+                                )
+                                .await
+                                .map_err(ConnectionError::IOError)?;
+                                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+                                continue;
+                            }
+                            Ok(()) => (),
+                        }
+
+                        // Check if the stream has pending data to send because
+                        // window size was too small to send data
+                        if st.has_data_to_send() {
+                            trace!("Stream has more data to send. Resuming it");
+                            st.try_send_data_payload(
+                                stream,
+                                &mut global_window_size,
+                                max_frame_size as usize,
+                            )
+                            .await?;
+                        }
+                    }
                     None => {
                         trace!("Update window received on an unregistered stream. Registering it");
                         stream_manager.register_new_stream(frame.stream_identifier);
-                        stream_manager
+                        match stream_manager
                             .get_at_mut(frame.stream_identifier)
                             .unwrap()
-                            .update_window(window_update.0);
+                            .update_window(window_update.0 as u64)
+                        {
+                            Err(_) if frame.stream_identifier == 0 => {
+                                return Err(ConnectionError::WindowUpdateTooBig);
+                            }
+                            Err(_) => {
+                                send_reset_stream(
+                                    stream,
+                                    frame.stream_identifier,
+                                    ConnectionError::WindowUpdateTooBig,
+                                )
+                                .await
+                                .map_err(ConnectionError::IOError)?;
+                                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+                                continue;
+                            }
+                            Ok(()) => (),
+                        }
+
+                        if frame.stream_identifier == 0 {
+                            global_window_size += window_update.0;
+                            trace!("Global window size is now {global_window_size}");
+                        }
                     }
+                }
+
+                if frame.stream_identifier == 0 {
+                    trace!("Global window size updated. Try to resume stall streams");
+                    stream_manager
+                        .try_send_data_all_stream(
+                            stream,
+                            &mut global_window_size,
+                            max_frame_size as usize,
+                        )
+                        .await?;
                 }
 
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
@@ -367,21 +496,18 @@ pub async fn do_connection_loop(
                             stream_manager.register_new_stream(frame.stream_identifier);
                         }
 
-                        stream_manager
-                            .get_at_mut(frame.stream_identifier)
-                            .unwrap()
-                            .set_headers(headers);
-
-                        respond_request(
-                            stream,
-                            frame.stream_identifier,
-                            &mut stream_manager,
-                            max_frame_size as usize,
-                            conf,
-                            &mut encoder,
-                        )
-                        .await
-                        .map_err(ConnectionError::IOError)?;
+                        let response_stream =
+                            stream_manager.get_at_mut(frame.stream_identifier).unwrap();
+                        response_stream.set_headers(headers);
+                        response_stream
+                            .respond_to(
+                                stream,
+                                max_frame_size as usize,
+                                &mut global_window_size,
+                                conf,
+                                &mut encoder,
+                            )
+                            .await?;
                     }
                     Err(err) => {
                         error!("Failed to parse headers: {err:?}");
@@ -415,7 +541,11 @@ pub async fn do_connection_loop(
                 }
 
                 if go_away.is_error() {
-                    error!("Received go away frame: {:?}", go_away);
+                    error!(
+                        "Received go away frame: {:?} message: {}",
+                        go_away,
+                        String::from_utf8_lossy(&go_away.additionnal_data)
+                    );
                 } else {
                     info!("Terminate connection without errors.");
                 }
@@ -431,7 +561,29 @@ pub async fn do_connection_loop(
             }
             FrameType::ResetStream => {
                 info!("Reset stream received: {frame:?}");
-                todo!("Handle reset stream");
+                let reset_frame = match frames::ResetStream::from_bytes(
+                    &buffer[FRAME_HEADER_LENGTH..],
+                    frame.length as usize,
+                ) {
+                    Ok(f) => f,
+                    Err(frames::FrameError::BadFrameSize(_)) => {
+                        let _ = stream
+                            .read_buf(&mut buffer)
+                            .await
+                            .map_err(ConnectionError::IOError)?;
+                        continue;
+                    }
+                    Err(_) => return Err(ConnectionError::InvalidFrame),
+                };
+
+                info!("Reset stream: {:?}", reset_frame);
+                let initial_size = stream_manager.get_initial_window_size();
+                stream_manager
+                    .get_at_mut(frame.stream_identifier)
+                    .ok_or(ConnectionError::InvalidFrame)?
+                    .reset(initial_size);
+
+                buffer.advance(FRAME_HEADER_LENGTH + 4);
             }
             FrameType::Data => todo!(),
             FrameType::PushPromise => todo!(),
@@ -439,7 +591,7 @@ pub async fn do_connection_loop(
                 let ping =
                     match frames::Ping::from_bytes(&buffer[FRAME_HEADER_LENGTH..], frame.flags) {
                         Ok(p) => p,
-                        Err(frames::FrameError::BadFrameSize(0)) => {
+                        Err(frames::FrameError::BadFrameSize(_)) => {
                             trace!("ping frame not fully received. Reading... again");
                             let _ = stream
                                 .read_buf(&mut buffer)
@@ -483,6 +635,8 @@ pub async fn do_connection_loop(
             }
         }
     }
+
+    Ok(())
 }
 pub async fn do_connection(
     ssl_socket: TlsAcceptor,
@@ -491,10 +645,18 @@ pub async fn do_connection(
 ) -> io::Result<()> {
     let mut buffer = BytesMut::new();
     let mut stream = ssl_socket.accept(client_socket).await?;
+    trace!("Do connection");
     let _ = stream.read_buf(&mut buffer).await?; // read connection preface
 
     debug!("Check connection preface");
-    let preface_offset = check_connection_preface(&buffer).expect("Bad connection preface");
+    let preface_offset = match check_connection_preface(&buffer) {
+        Some(size) => size,
+        None => {
+            error!("Bad connection preface!");
+            return send_go_away(&mut stream, ConnectionError::BadConnectionPreface).await;
+        }
+    };
+
     debug!("Connection preface good");
 
     buffer.advance(preface_offset); // consume connection preface in buffer
@@ -504,5 +666,9 @@ pub async fn do_connection(
         Err(err) => send_go_away(&mut stream, err).await?,
     }
 
-    connection_error_to_io_error!(do_connection_loop(&mut stream, &config, buffer).await, ())
+    match do_connection_loop(&mut stream, &config, buffer).await {
+        Ok(_) => Ok(()),
+        Err(ConnectionError::IOError(e)) => Err(e),
+        Err(err) => send_go_away(&mut stream, err).await,
+    }
 }
