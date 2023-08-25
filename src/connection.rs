@@ -74,13 +74,11 @@ pub enum ConnectionError {
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
 
 pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> ConnectionResult<()> {
-    let mut sent_data = 0usize;
-
-    while sent_data < data.len() {
-        sent_data += stream.write(data).await.map_err(ConnectionError::IOError)?;
-    }
-
-    Ok(())
+    stream
+        .write_all(data)
+        .await
+        .map(|_| ())
+        .map_err(ConnectionError::IOError)
 }
 
 async fn send_server_setting(stream: &mut TlsStream<TcpStream>) -> ConnectionResult<()> {
@@ -365,11 +363,21 @@ pub async fn do_connection_loop(
                 send_all(stream, &ack_buffer[..]).await?;
             }
             FrameType::WindowUpdate => {
-                let window_update = frames::WindowUpdate::from_bytes(
+                let window_update = match frames::WindowUpdate::from_bytes(
                     &buffer[FRAME_HEADER_LENGTH..],
                     frame.length as usize,
-                )
-                .map_err(|_| ConnectionError::InvalidFrame)?;
+                ) {
+                    Ok(wu) => wu,
+                    Err(frames::FrameError::BadFrameSize(_)) => {
+                        let _ = stream
+                            .read_buf(&mut buffer)
+                            .await
+                            .map_err(ConnectionError::IOError)?;
+                        continue;
+                    }
+                    Err(_) => return Err(ConnectionError::InvalidFrame),
+                };
+
                 info!("Window update: {:?}", window_update);
 
                 // See RFC 9113
@@ -561,7 +569,7 @@ pub async fn do_connection_loop(
                 let ping =
                     match frames::Ping::from_bytes(&buffer[FRAME_HEADER_LENGTH..], frame.flags) {
                         Ok(p) => p,
-                        Err(frames::FrameError::BadFrameSize(0)) => {
+                        Err(frames::FrameError::BadFrameSize(_)) => {
                             trace!("ping frame not fully received. Reading... again");
                             let _ = stream
                                 .read_buf(&mut buffer)

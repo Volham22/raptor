@@ -160,13 +160,24 @@ impl Stream {
             .count();
         let mut data_sent = 0usize;
         let mut window_space = self.window_space;
+
+        if window_space == 0 || *global_window_size == 0 {
+            trace!(
+                "stream {}: Can't receive data yet window is empty (local_window: {}, global_window: {})",
+                self.identifier,
+                window_space,
+                global_window_size
+            );
+            return Ok(());
+        }
+
         trace!(
             "stream: {} Try to send payload: max_frame_size: {max_frame_size} local_window_size: {:?} global_window_size: {} remaining_bytes: {}",
             self.identifier,
             self.window_space,
             global_window_size,
             self.data_to_send.as_ref().unwrap().len(),
-            );
+        );
 
         for (i, chunk) in self
             .data_to_send
@@ -201,12 +212,18 @@ impl Stream {
             let mut data_frame = frames::Data::new(Bytes::copy_from_slice(chunk));
             let mut data_frame_buffer = BytesMut::with_capacity(FRAME_HEADER_LENGTH + chunk.len());
 
-            data_frame.set_flags(if self.data_to_send.as_ref().unwrap().len() - (data_sent + chunk.len()) == 0 {
-                0x01 // close stream it's the last data frame we'll send
-            } else {
-                0x00
-            });
+            data_frame.set_flags(
+                if self.data_to_send.as_ref().unwrap().len() - (data_sent + chunk.len()) == 0 {
+                    0x01 // close stream it's the last data frame we'll send
+                } else {
+                    0x00
+                },
+            );
 
+            debug!(
+                "stream {}: Data frame flags {}",
+                self.identifier, data_frame.flags
+            );
             build_frame_header(
                 &mut data_frame_buffer,
                 frames::FrameType::Data,
@@ -232,6 +249,7 @@ impl Stream {
         // None
         assert!(!self.data_to_send.as_ref().unwrap().has_remaining());
         self.data_to_send = None;
+        debug!("Stream {}: sent {}", self.identifier, data_sent);
         self.mark_as_closed();
 
         Ok(())
