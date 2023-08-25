@@ -2,7 +2,7 @@ use std::{fmt::Display, mem};
 
 use tracing::warn;
 
-use crate::http2::response::ResponseSerialize;
+use crate::{connection::ConnectionError, http2::response::ResponseSerialize};
 
 use super::{FrameError, FRAME_HEADER_LENGTH};
 
@@ -46,6 +46,25 @@ impl Display for ErrorType {
     }
 }
 
+impl From<ConnectionError> for ErrorType {
+    fn from(value: ConnectionError) -> ErrorType {
+        match value {
+            ConnectionError::WindowUpdateTooBig => ErrorType::FlowControlError,
+            ConnectionError::IOError(_) => unreachable!(),
+            ConnectionError::NonZeroSettingsAckLength
+            | ConnectionError::BadLengthWindowUpdate(_)
+            | ConnectionError::SettingsLengthNotMultipleOf6 => ErrorType::FrameSizeError,
+            _ => ErrorType::ProtocolError,
+        }
+    }
+}
+
+impl From<ErrorType> for u32 {
+    fn from(value: ErrorType) -> Self {
+        value as u32
+    }
+}
+
 impl From<u32> for ErrorType {
     fn from(value: u32) -> Self {
         match value {
@@ -78,7 +97,7 @@ impl From<u32> for ErrorType {
 pub struct GoAway {
     kind: ErrorType,
     last_stream_id: u32,
-    additionnal_data: Vec<u8>,
+    pub additionnal_data: Vec<u8>,
 }
 
 impl GoAway {
@@ -95,8 +114,8 @@ impl GoAway {
             return Err(FrameError::BadFrameSize(data.len()));
         }
 
-        let last_stream_id = u32::from_be_bytes([data[3], data[2], data[1], data[0]]);
-        let kind = ErrorType::from(u32::from_be_bytes([data[7], data[6], data[5], data[4]]));
+        let last_stream_id = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        let kind = ErrorType::from(u32::from_be_bytes([data[4], data[5], data[6], data[7]]));
         let additionnal_data = data[8..length].to_vec();
 
         Ok(Self {

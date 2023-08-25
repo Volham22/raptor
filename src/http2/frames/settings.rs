@@ -3,9 +3,9 @@ use std::mem::size_of;
 use bytes::BufMut;
 use tracing::warn;
 
-use crate::http2::response::ResponseSerialize;
+use crate::http2::{response::ResponseSerialize, stream::INITIAL_WINDOW_SIZE};
 
-use super::DEFAULT_MAX_FRAME_SIZE;
+use super::{FrameError, DEFAULT_MAX_FRAME_SIZE};
 
 const TUPLE_LENGTH: usize = size_of::<u16>() + size_of::<u32>();
 
@@ -51,7 +51,6 @@ impl Default for Settings {
             is_ack: false,
             flags: vec![
                 (SettingKind::MaxConcurrentStreams, 1000),
-                (SettingKind::InitialWindowSize, u16::MAX as u32),
                 (SettingKind::MaxHeaderListSize, 100),
             ],
         }
@@ -59,14 +58,14 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn from_bytes(value: &[u8], length: usize) -> Result<Self, &'static str> {
+    pub fn from_bytes(value: &[u8], length: usize) -> Result<Self, FrameError> {
         // A setting is 16 bits identifier + 32 bits value so 6 bytes
         if length % 6 != 0 {
-            return Err("Invalid setting payload size");
+            return Err(FrameError::SettingsFrameSize(length));
         }
 
-        if value.len() <= length {
-            return Err("Not enought data in buffer");
+        if value.len() < length {
+            return Err(FrameError::BadFrameSize(length));
         }
 
         let mut flags: Vec<Setting> = Vec::new();
@@ -102,6 +101,13 @@ impl Settings {
             .find(|f| f.0 == SettingKind::MaxFrameSize)
             .map(|f| f.1) // map to value
             .unwrap_or(DEFAULT_MAX_FRAME_SIZE)
+    }
+
+    pub fn get_initial_window_size(&self) -> Option<u32> {
+        self.flags
+            .iter()
+            .find(|f| f.0 == SettingKind::InitialWindowSize)
+            .map(|f| f.1)
     }
 }
 

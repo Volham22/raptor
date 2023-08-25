@@ -5,12 +5,16 @@ pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16384; // 2^14
 
 #[derive(Error, Debug)]
 pub enum FrameError {
-    #[error("Not enought bytes to parse a frame ({0} < 9)")]
+    #[error("Not enough bytes to parse a frame ({0} < 9)")]
     BadFrameSize(usize),
     #[error("Unknown frame number `{0}`")]
     UnknownFrameNumber(u8),
     #[error("HPACK decoder error: '{0:?}'")]
     HpackDecoderError(hpack::decoder::DecoderError),
+    #[error("Settings frame size it not a multiple of 6")]
+    SettingsFrameSize(usize),
+    #[error("Window update that is greater than 2^31-1")]
+    WindowUpdateTooBig,
     // #[error("Continuation frame without header frame")]
     // ContinuationWithoutHeader,
     // #[error("Continuation frame but END_HEADERS set")]
