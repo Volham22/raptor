@@ -3,7 +3,7 @@ use std::mem::size_of;
 use bytes::BufMut;
 use tracing::warn;
 
-use crate::http2::{response::ResponseSerialize, stream::INITIAL_WINDOW_SIZE};
+use crate::http2::{response::ResponseSerialize};
 
 use super::{FrameError, DEFAULT_MAX_FRAME_SIZE};
 

@@ -254,6 +254,16 @@ impl Stream {
 
         Ok(())
     }
+
+    pub fn reset(&mut self, initial_window_size: u64) {
+        self.window_space = initial_window_size;
+        self.mark_as_closed();
+        self.request_headers = None;
+
+        if self.data_to_send.is_some() {
+            self.data_to_send = None;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -322,5 +332,9 @@ impl StreamManager {
         trace!("Register new stream at index: {index}");
         self.streams
             .insert(index, Stream::new(index, self.initial_window_size as u64));
+    }
+
+    pub fn get_initial_window_size(&self) -> u64 {
+        self.initial_window_size.into()
     }
 }

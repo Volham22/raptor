@@ -561,7 +561,29 @@ pub async fn do_connection_loop(
             }
             FrameType::ResetStream => {
                 info!("Reset stream received: {frame:?}");
-                todo!("Handle reset stream");
+                let reset_frame = match frames::ResetStream::from_bytes(
+                    &buffer[FRAME_HEADER_LENGTH..],
+                    frame.length as usize,
+                ) {
+                    Ok(f) => f,
+                    Err(frames::FrameError::BadFrameSize(_)) => {
+                        let _ = stream
+                            .read_buf(&mut buffer)
+                            .await
+                            .map_err(ConnectionError::IOError)?;
+                        continue;
+                    }
+                    Err(_) => return Err(ConnectionError::InvalidFrame),
+                };
+
+                info!("Reset stream: {:?}", reset_frame);
+                let initial_size = stream_manager.get_initial_window_size();
+                stream_manager
+                    .get_at_mut(frame.stream_identifier)
+                    .ok_or(ConnectionError::InvalidFrame)?
+                    .reset(initial_size);
+
+                buffer.advance(FRAME_HEADER_LENGTH + 4);
             }
             FrameType::Data => todo!(),
             FrameType::PushPromise => todo!(),
