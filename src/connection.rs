@@ -442,8 +442,8 @@ pub async fn do_connection_loop(
                         match stream_manager
                             .get_at_mut(frame.stream_identifier)
                             .unwrap()
-                            .update_window(window_update.0 as u64) {
-
+                            .update_window(window_update.0 as u64)
+                        {
                             Err(_) if frame.stream_identifier == 0 => {
                                 return Err(ConnectionError::WindowUpdateTooBig);
                             }
@@ -459,8 +459,7 @@ pub async fn do_connection_loop(
                                 continue;
                             }
                             Ok(()) => (),
-                            }
-
+                        }
 
                         if frame.stream_identifier == 0 {
                             global_window_size += window_update.0;
