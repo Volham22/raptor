@@ -21,9 +21,9 @@ impl Default for Ping {
 }
 
 impl Ping {
-    pub fn new(is_ack: bool) -> Self {
+    pub fn new(is_ack: bool, opaque_data: u64) -> Self {
         Self {
-            opaque_data: 666,
+            opaque_data,
             is_ack,
         }
     }
