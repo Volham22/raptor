@@ -75,8 +75,8 @@ impl TryFrom<&[u8]> for Frame {
         let length = u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]]);
         let frame_type = u8::from_be(bytes[3]);
         let flags = u8::from_be(bytes[4]);
-        let stream_identifier =
-            u32::from_be_bytes(<[u8; 4]>::try_from(&bytes[5..=8]).expect("unreachable"));
+        // Ignore the reserved bit value
+        let stream_identifier = u32::from_be_bytes([bytes[5] & 0x08, bytes[6], bytes[7], bytes[8]]);
 
         Ok(Self {
             length,
