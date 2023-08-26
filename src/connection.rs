@@ -77,8 +77,8 @@ pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> Connect
     stream
         .write_all(data)
         .await
-        .map(|_| ())
-        .map_err(ConnectionError::IOError)
+        .map_err(ConnectionError::IOError)?;
+    stream.flush().await.map_err(ConnectionError::IOError)
 }
 
 async fn send_server_setting(stream: &mut TlsStream<TcpStream>) -> ConnectionResult<()> {
