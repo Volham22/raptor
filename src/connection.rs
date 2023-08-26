@@ -617,7 +617,7 @@ pub async fn do_connection_loop(
                 if ping.is_ack {
                     info!("Received ping ack with value: {}", ping.opaque_data);
                 } else {
-                    let ping_ack = frames::Ping::new(true);
+                    let ping_ack = frames::Ping::new(true, ping.opaque_data);
                     let mut buf =
                         BytesMut::with_capacity(FRAME_HEADER_LENGTH + frames::PING_LENGTH);
 
