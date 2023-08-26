@@ -44,8 +44,8 @@ root_dir: /srv
 
 ## Known limitations
 
-This server is not really production ready yet and may have to non standard
-behaviors. Plain text HTTP/2 is not supported and never will because because
+This server is not really production ready yet and may have non standard
+behaviors. Plain text HTTP/2 is not supported and never will because
 majors browsers like `Firefox` and `Chromium` based browsers don't.
 
 ## Planned features to add
