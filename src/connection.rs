@@ -69,6 +69,8 @@ pub enum ConnectionError {
     BadConnectionPreface,
     #[error("Window update too big")]
     WindowUpdateTooBig,
+    #[error("Received frame is too big")]
+    FrameTooBig { actual: u32, max_frame_size: u32 },
 }
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -97,6 +99,7 @@ async fn receive_headers(
     buffer: &mut BytesMut,
     decoder: &mut hpack::Decoder<'_>,
     frame: &Frame,
+    max_frame_size: u32,
 ) -> ConnectionResult<frames::Headers> {
     trace!("Receiving headers");
     match frames::Headers::from_bytes(
@@ -156,6 +159,7 @@ async fn receive_headers(
                             &mut headers_bytes,
                             decoder,
                             frame,
+                            max_frame_size,
                         )
                         .await;
                     }
@@ -172,13 +176,14 @@ async fn receive_continuation_frames(
     headers_bytes: &mut BytesMut,
     decoder: &mut hpack::Decoder<'_>,
     frame: &Frame,
+    max_frame_size: u32,
 ) -> ConnectionResult<frames::Headers> {
     trace!("Begin continuation frame handling");
     let mut total_size: usize = frame.length as usize;
 
     loop {
-        let frame =
-            Frame::try_from(buffer.as_ref()).map_err(ConnectionError::InvalidHeaderFrame)?;
+        let frame = Frame::try_from_bytes(buffer.as_ref(), max_frame_size)
+            .map_err(ConnectionError::InvalidHeaderFrame)?;
         if let FrameType::Continuation = frame.frame_type {
             debug!("Got continuation frame header: {frame:?}");
             let continuation = match frames::Continuation::from_bytes(
@@ -269,7 +274,7 @@ pub async fn do_connection_loop(
     let mut global_window_size: u32 = 65535;
 
     loop {
-        let frame_result = Frame::try_from(buffer.as_ref());
+        let frame_result = Frame::try_from_bytes(buffer.as_ref(), max_frame_size);
         let frame = match frame_result {
             Ok(fr) => fr,
             Err(frames::FrameError::UnknownFrameNumber(n)) => {
@@ -280,6 +285,9 @@ pub async fn do_connection_loop(
                     .await
                     .map_err(ConnectionError::IOError)?;
                 continue;
+            }
+            Err(frames::FrameError::FrameTooBig { actual, max_frame_size }) => {
+                return Err(ConnectionError::FrameTooBig{ actual, max_frame_size });
             }
             Err(msg) => {
                 warn!("Bad frame: {msg}");
@@ -499,7 +507,9 @@ pub async fn do_connection_loop(
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Headers => {
-                match receive_headers(stream, &mut buffer, &mut decoder, &frame).await {
+                match receive_headers(stream, &mut buffer, &mut decoder, &frame, max_frame_size)
+                    .await
+                {
                     Ok(headers) => {
                         if !stream_manager.has_stream(frame.stream_identifier) {
                             stream_manager.register_new_stream(frame.stream_identifier);
@@ -595,7 +605,9 @@ pub async fn do_connection_loop(
                 buffer.advance(FRAME_HEADER_LENGTH + 4);
             }
             FrameType::Data => {
-                warn!("Got data frame. Its content will be ignored the server does not support it.");
+                warn!(
+                    "Got data frame. Its content will be ignored the server does not support it."
+                );
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
             }
             FrameType::PushPromise => todo!(),

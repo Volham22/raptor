@@ -26,7 +26,7 @@ impl<'a> TryFrom<&'a [u8]> for RequestType {
             b"put" => Ok(Self::Put),
             b"head" => Ok(Self::Head),
             _ => {
-                error!("Unsupported method: {value:#02x?}");
+                error!("Unsupported method: {}", String::from_utf8_lossy(value));
                 Err(RequestError::UnsupportedMethod(value))
             }
         }
