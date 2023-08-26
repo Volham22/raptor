@@ -630,8 +630,9 @@ pub async fn do_connection_loop(
                     );
 
                     send_all(stream, buf.as_ref()).await?;
-                    buffer.advance(FRAME_HEADER_LENGTH + frames::PING_LENGTH);
                 }
+
+                buffer.advance(FRAME_HEADER_LENGTH + frames::PING_LENGTH);
             }
         }
     }
