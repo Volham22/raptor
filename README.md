@@ -2,7 +2,7 @@
 
 Raptor is an easy to use HTTP/2 server.
 
-![Raptor logo](images/raptor_logo.png)
+![](images/raptor_transparent.png)
 
 ## Getting raptor
 
