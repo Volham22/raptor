@@ -15,6 +15,8 @@ pub enum FrameError {
     SettingsFrameSize(usize),
     #[error("Window update that is greater than 2^31-1")]
     WindowUpdateTooBig,
+    #[error("Frame is too big ({actual} > {max_frame_size})")]
+    FrameTooBig { actual: u32, max_frame_size: u32 },
     // #[error("Continuation frame without header frame")]
     // ContinuationWithoutHeader,
     // #[error("Continuation frame but END_HEADERS set")]
@@ -64,19 +66,21 @@ pub struct Frame {
     pub stream_identifier: u32,
 }
 
-impl TryFrom<&[u8]> for Frame {
-    type Error = FrameError;
-
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+impl Frame {
+    pub fn try_from_bytes(bytes: &[u8], max_frame_size: u32) -> Result<Self, FrameError> {
         if bytes.len() < FRAME_HEADER_LENGTH {
             return Err(FrameError::BadFrameSize(bytes.len()));
         }
 
         let length = u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]]);
+        if length >= max_frame_size {
+            return Err(FrameError::FrameTooBig { actual: length, max_frame_size });
+        }
+
         let frame_type = u8::from_be(bytes[3]);
         let flags = u8::from_be(bytes[4]);
-        let stream_identifier =
-            u32::from_be_bytes(<[u8; 4]>::try_from(&bytes[5..=8]).expect("unreachable"));
+        // Ignore the reserved bit value
+        let stream_identifier = u32::from_be_bytes([bytes[5] & 0x08, bytes[6], bytes[7], bytes[8]]);
 
         Ok(Self {
             length,
