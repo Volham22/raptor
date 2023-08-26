@@ -272,6 +272,15 @@ pub async fn do_connection_loop(
         let frame_result = Frame::try_from(buffer.as_ref());
         let frame = match frame_result {
             Ok(fr) => fr,
+            Err(frames::FrameError::UnknownFrameNumber(n)) => {
+                warn!("Got unknown frame number: {}. Ignoring it.", n);
+                buffer.advance(u32::from_be_bytes([0, buffer[0], buffer[1], buffer[2]]) as usize);
+                let _ = stream
+                    .read_buf(&mut buffer)
+                    .await
+                    .map_err(ConnectionError::IOError)?;
+                continue;
+            }
             Err(msg) => {
                 warn!("Bad frame: {msg}");
                 trace!("Continue to read, the frame might be not fully received");
@@ -585,7 +594,10 @@ pub async fn do_connection_loop(
 
                 buffer.advance(FRAME_HEADER_LENGTH + 4);
             }
-            FrameType::Data => todo!(),
+            FrameType::Data => {
+                warn!("Got data frame. Its content will be ignored the server does not support it.");
+                buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize);
+            }
             FrameType::PushPromise => todo!(),
             FrameType::Ping => {
                 // See RFC 9113
