@@ -13,7 +13,7 @@ use crate::{
     config::Config,
     http2::{
         check_connection_preface,
-        frames::{self, Frame, FrameType, FRAME_HEADER_LENGTH},
+        frames::{self, Frame, FrameType, FRAME_HEADER_LENGTH, PING_LENGTH},
         response::{build_frame_header, ResponseSerialize},
         stream::StreamManager,
     },
@@ -588,6 +588,21 @@ pub async fn do_connection_loop(
             FrameType::Data => todo!(),
             FrameType::PushPromise => todo!(),
             FrameType::Ping => {
+                // See RFC 9113
+                if frame.stream_identifier != 0 {
+                    error!("Ping on non zero stream received");
+                    return Err(ConnectionError::PingOnNon0Stream);
+                }
+
+                if frame.length != PING_LENGTH as u32 {
+                    error!(
+                        "Ping frame length is not {} (got: {})",
+                        PING_LENGTH, frame.length
+                    );
+
+                    return Err(ConnectionError::BadPingFrameSize);
+                }
+
                 let ping =
                     match frames::Ping::from_bytes(&buffer[FRAME_HEADER_LENGTH..], frame.flags) {
                         Ok(p) => p,
@@ -597,22 +612,11 @@ pub async fn do_connection_loop(
                                 .read_buf(&mut buffer)
                                 .await
                                 .map_err(ConnectionError::IOError)?;
+
                             continue;
                         }
                         Err(_) => unreachable!(),
                     };
-
-                // See RFC 9113
-                if frame.length != 8 {
-                    error!("Ping frame has a length other than 8");
-                    return Err(ConnectionError::BadPingFrameSize);
-                }
-
-                // See RFC 9113
-                if frame.stream_identifier != 0 {
-                    error!("Ping on non zero stream received");
-                    return Err(ConnectionError::PingOnNon0Stream);
-                }
 
                 if ping.is_ack {
                     info!("Received ping ack with value: {}", ping.opaque_data);
