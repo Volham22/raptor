@@ -9,6 +9,7 @@ pub enum RequestError<'a> {
     MalformedRequest,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum RequestType {
     Get,
     Delete,

@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 mod config;
 mod connection;
 mod http2;
+mod http11;
 mod method_handlers;
 mod request;
 mod response;

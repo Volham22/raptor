@@ -25,7 +25,7 @@ pub async fn do_connection(
 
     match conn.alpn_protocol() {
         Some(b"h2") => http2::do_http2(stream, config).await,
-        Some(b"http/1.1") => do_http11().await,
+        Some(b"http/1.1") => http11::do_http11(stream, config).await,
         Some(protocol) => {
             error!("Bad protocol received: '{:?}' closing connection", protocol);
             Ok(())

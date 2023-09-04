@@ -1,10 +1,12 @@
 use std::io;
 
 use bytes::Bytes;
+use tracing::error;
 
 const DATE_FMT_STR: &str = "%a, %d %b %Y %H:%M:%S GMT";
 const SERVER_NAME: &[u8; 6] = b"raptor";
 
+#[derive(Debug)]
 pub struct Response {
     pub code: u16,
     pub headers: Vec<(Bytes, Bytes)>,
@@ -118,6 +120,20 @@ impl Response {
                     body: None,
                 },
             },
+        }
+    }
+
+    pub fn get_code_string(&self) -> &'static str {
+        match self.code {
+            200 => "OK",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            _ => {
+                error!("Unknown http code: {}", self.code);
+                "Internal Server Error"
+            }
         }
     }
 }
