@@ -1,37 +1,23 @@
-use std::{io, sync::Arc};
-
 use bytes::{Buf, BufMut, BytesMut};
+use std::{io, sync::Arc};
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
-use tokio_rustls::{server::TlsStream, TlsAcceptor};
+use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     config::Config,
     http2::{
-        check_connection_preface,
-        frames::{self, Frame, FrameType, FRAME_HEADER_LENGTH, PING_LENGTH},
+        frames::{self, FrameType, FRAME_HEADER_LENGTH, PING_LENGTH},
         response::{build_frame_header, ResponseSerialize},
         stream::StreamManager,
     },
 };
 
-macro_rules! connection_error_to_io_error {
-    ($err:expr, $ty:ty) => {
-        match $err {
-            Ok(_) => Ok::<$ty, ::std::io::Error>(()),
-            Err(crate::connection::ConnectionError::IOError(err)) => {
-                Err::<$ty, ::std::io::Error>(err)
-            }
-            Err(_) => unreachable!("should never be other than IOError!"),
-        }
-    };
-}
-
-pub(crate) use connection_error_to_io_error;
+const CONNECTION_PRFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 #[derive(Error, Debug)]
 pub enum ConnectionError {
@@ -75,6 +61,24 @@ pub enum ConnectionError {
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
 
+macro_rules! connection_error_to_io_error {
+    ($err:expr, $ty:ty) => {
+        match $err {
+            Ok(_) => Ok::<$ty, ::std::io::Error>(()),
+            Err(ConnectionError::IOError(err)) => Err::<$ty, ::std::io::Error>(err),
+            Err(_) => unreachable!("should never be other than IOError!"),
+        }
+    };
+}
+
+pub fn check_connection_preface(bytes: &[u8]) -> Option<usize> {
+    if bytes.starts_with(CONNECTION_PRFACE) {
+        Some(CONNECTION_PRFACE.len())
+    } else {
+        None
+    }
+}
+
 pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> ConnectionResult<()> {
     stream
         .write_all(data)
@@ -98,7 +102,7 @@ async fn receive_headers(
     stream: &mut TlsStream<TcpStream>,
     buffer: &mut BytesMut,
     decoder: &mut hpack::Decoder<'_>,
-    frame: &Frame,
+    frame: &frames::Frame,
     max_frame_size: u32,
 ) -> ConnectionResult<frames::Headers> {
     trace!("Receiving headers");
@@ -175,14 +179,14 @@ async fn receive_continuation_frames(
     buffer: &mut BytesMut,
     headers_bytes: &mut BytesMut,
     decoder: &mut hpack::Decoder<'_>,
-    frame: &Frame,
+    frame: &frames::Frame,
     max_frame_size: u32,
 ) -> ConnectionResult<frames::Headers> {
     trace!("Begin continuation frame handling");
     let mut total_size: usize = frame.length as usize;
 
     loop {
-        let frame = Frame::try_from_bytes(buffer.as_ref(), max_frame_size)
+        let frame = frames::Frame::try_from_bytes(buffer.as_ref(), max_frame_size)
             .map_err(ConnectionError::InvalidHeaderFrame)?;
         if let FrameType::Continuation = frame.frame_type {
             debug!("Got continuation frame header: {frame:?}");
@@ -274,7 +278,7 @@ pub async fn do_connection_loop(
     let mut global_window_size: u32 = 65535;
 
     loop {
-        let frame_result = Frame::try_from_bytes(buffer.as_ref(), max_frame_size);
+        let frame_result = frames::Frame::try_from_bytes(buffer.as_ref(), max_frame_size);
         let frame = match frame_result {
             Ok(fr) => fr,
             Err(frames::FrameError::UnknownFrameNumber(n)) => {
@@ -673,33 +677,8 @@ pub async fn do_connection_loop(
 
     Ok(())
 }
-pub async fn do_connection(
-    ssl_socket: TlsAcceptor,
-    client_socket: TcpStream,
-    config: Arc<Config>,
-) -> io::Result<()> {
-    let stream = ssl_socket.accept(client_socket).await?;
-    let (_, conn) = stream.get_ref();
-    debug!(
-        "ALPN: {:?}",
-        String::from_utf8_lossy(conn.alpn_protocol().unwrap())
-    );
 
-    match conn.alpn_protocol() {
-        Some(b"h2") => do_http2(stream, config).await,
-        Some(b"http/1.1") => do_http11().await,
-        Some(protocol) => {
-            error!("Bad protocol received: '{:?}' closing connection", protocol);
-            Ok(())
-        }
-        None => {
-            error!("No protocol negociated via APLN! Closing connection");
-            Ok(())
-        }
-    }
-}
-
-async fn do_http2(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::Result<()> {
+pub async fn do_http2(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::Result<()> {
     let mut buffer = BytesMut::new();
     trace!("Do http2 connection");
     let _ = stream.read_buf(&mut buffer).await?; // read connection preface
@@ -727,8 +706,4 @@ async fn do_http2(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::
         Err(ConnectionError::IOError(e)) => Err(e),
         Err(err) => send_go_away(&mut stream, err).await,
     }
-}
-
-async fn do_http11() -> io::Result<()> {
-    todo!()
 }

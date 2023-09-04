@@ -54,7 +54,7 @@ impl From<ConnectionError> for ErrorType {
             ConnectionError::NonZeroSettingsAckLength
             | ConnectionError::BadLengthWindowUpdate(_)
             | ConnectionError::BadPingFrameSize
-            | ConnectionError::FrameTooBig{..}
+            | ConnectionError::FrameTooBig { .. }
             | ConnectionError::SettingsLengthNotMultipleOf6 => ErrorType::FrameSizeError,
             _ => ErrorType::ProtocolError,
         }
