@@ -286,8 +286,14 @@ pub async fn do_connection_loop(
                     .map_err(ConnectionError::IOError)?;
                 continue;
             }
-            Err(frames::FrameError::FrameTooBig { actual, max_frame_size }) => {
-                return Err(ConnectionError::FrameTooBig{ actual, max_frame_size });
+            Err(frames::FrameError::FrameTooBig {
+                actual,
+                max_frame_size,
+            }) => {
+                return Err(ConnectionError::FrameTooBig {
+                    actual,
+                    max_frame_size,
+                });
             }
             Err(msg) => {
                 warn!("Bad frame: {msg}");
@@ -672,9 +678,30 @@ pub async fn do_connection(
     client_socket: TcpStream,
     config: Arc<Config>,
 ) -> io::Result<()> {
+    let stream = ssl_socket.accept(client_socket).await?;
+    let (_, conn) = stream.get_ref();
+    debug!(
+        "ALPN: {:?}",
+        String::from_utf8_lossy(conn.alpn_protocol().unwrap())
+    );
+
+    match conn.alpn_protocol() {
+        Some(b"h2") => do_http2(stream, config).await,
+        Some(b"http/1.1") => do_http11().await,
+        Some(protocol) => {
+            error!("Bad protocol received: '{:?}' closing connection", protocol);
+            Ok(())
+        }
+        None => {
+            error!("No protocol negociated via APLN! Closing connection");
+            Ok(())
+        }
+    }
+}
+
+async fn do_http2(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::Result<()> {
     let mut buffer = BytesMut::new();
-    let mut stream = ssl_socket.accept(client_socket).await?;
-    trace!("Do connection");
+    trace!("Do http2 connection");
     let _ = stream.read_buf(&mut buffer).await?; // read connection preface
 
     debug!("Check connection preface");
@@ -700,4 +727,8 @@ pub async fn do_connection(
         Err(ConnectionError::IOError(e)) => Err(e),
         Err(err) => send_go_away(&mut stream, err).await,
     }
+}
+
+async fn do_http11() -> io::Result<()> {
+    todo!()
 }
