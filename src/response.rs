@@ -81,6 +81,10 @@ impl Response {
                             ),
                         ),
                         (
+                            Bytes::from_static(b"content-length"),
+                            Bytes::from_static(b"0"),
+                        ),
+                        (
                             Bytes::from_static(b"server"),
                             Bytes::from_static(SERVER_NAME),
                         ),
@@ -100,6 +104,10 @@ impl Response {
                             Bytes::from_static(b"server"),
                             Bytes::from_static(SERVER_NAME),
                         ),
+                        (
+                            Bytes::from_static(b"content-length"),
+                            Bytes::from_static(b"0"),
+                        ),
                     ],
                     body: None,
                 },
@@ -115,6 +123,10 @@ impl Response {
                         (
                             Bytes::from_static(b"server"),
                             Bytes::from_static(SERVER_NAME),
+                        ),
+                        (
+                            Bytes::from_static(b"content-length"),
+                            Bytes::from_static(b"0"),
                         ),
                     ],
                     body: None,

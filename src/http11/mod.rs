@@ -1,4 +1,4 @@
-use std::fmt::{Debug};
+use std::fmt::Debug;
 
 use crate::request::{HttpRequest, RequestError, RequestType};
 
@@ -10,7 +10,7 @@ pub struct Request<'buf> {
 impl Debug for Request<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "{{ type: {:?}, uri: {} }}",
+            "{{type: {:?}, uri: {}}}",
             self.ty,
             String::from_utf8_lossy(self.uri)
         ))
