@@ -53,4 +53,4 @@ majors browsers like `Firefox` and `Chromium` based browsers don't.
 - [ ] Support for vhosts (optional in configuration files)
 - [ ] Make the server fully RFC compliant (pass all [h2spec](https://github.com/summerwind/h2spec) tests)
 - [ ] Support non encrypted connections upgrade (when port 80 is used which is the default for most browsers)
-- [ ] Support for HTTP/1.1 as a fallback for clients which doesn't support HTTP/2
+- [X] Support for HTTP/1.1 as a fallback for clients which doesn't support HTTP/2
