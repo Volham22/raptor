@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 mod config;
 mod connection;
 mod http2;
+mod http11;
 mod method_handlers;
 mod request;
 mod response;
@@ -82,10 +83,14 @@ async fn main() -> io::Result<()> {
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     // Allow http2 for ALPN negociation with the client
-    config.alpn_protocols = vec![b"h2".to_vec()];
-    debug!("Supported ALPN protocols: {:?}", config.alpn_protocols);
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let shared_config = Arc::new(config);
+    debug!(
+        "Supported ALPN protocols: {:?}",
+        shared_config.alpn_protocols
+    );
 
-    let acceptor = TlsAcceptor::from(Arc::new(config));
+    let acceptor = TlsAcceptor::from(shared_config.clone());
     let listener_socket = TcpListener::bind(&addr).await?;
     info!("Start to listen on {:?}", &addr);
     info!("Serving from root directory: {:?}", conf.root_dir);

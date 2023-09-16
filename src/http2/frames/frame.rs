@@ -74,7 +74,10 @@ impl Frame {
 
         let length = u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]]);
         if length >= max_frame_size {
-            return Err(FrameError::FrameTooBig { actual: length, max_frame_size });
+            return Err(FrameError::FrameTooBig {
+                actual: length,
+                max_frame_size,
+            });
         }
 
         let frame_type = u8::from_be(bytes[3]);

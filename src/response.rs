@@ -1,10 +1,12 @@
 use std::io;
 
 use bytes::Bytes;
+use tracing::error;
 
 const DATE_FMT_STR: &str = "%a, %d %b %Y %H:%M:%S GMT";
 const SERVER_NAME: &[u8; 6] = b"raptor";
 
+#[derive(Debug)]
 pub struct Response {
     pub code: u16,
     pub headers: Vec<(Bytes, Bytes)>,
@@ -12,6 +14,29 @@ pub struct Response {
 }
 
 impl Response {
+    pub fn bad_request() -> Self {
+        Self {
+            code: 400,
+            headers: vec![
+                (
+                    Bytes::from_static(b"date"),
+                    Bytes::copy_from_slice(
+                        format!("{}", chrono::Utc::now().format(DATE_FMT_STR)).as_bytes(),
+                    ),
+                ),
+                (
+                    Bytes::from_static(b"content-length"),
+                    Bytes::from_static(b"0"),
+                ),
+                (
+                    Bytes::from_static(b"server"),
+                    Bytes::from_static(SERVER_NAME),
+                ),
+            ],
+            body: None,
+        }
+    }
+
     pub fn from_io_result(value: io::Result<Option<Bytes>>, extension: &str) -> Self {
         match value {
             Ok(Some(body)) => Self {
@@ -79,6 +104,10 @@ impl Response {
                             ),
                         ),
                         (
+                            Bytes::from_static(b"content-length"),
+                            Bytes::from_static(b"0"),
+                        ),
+                        (
                             Bytes::from_static(b"server"),
                             Bytes::from_static(SERVER_NAME),
                         ),
@@ -98,6 +127,10 @@ impl Response {
                             Bytes::from_static(b"server"),
                             Bytes::from_static(SERVER_NAME),
                         ),
+                        (
+                            Bytes::from_static(b"content-length"),
+                            Bytes::from_static(b"0"),
+                        ),
                     ],
                     body: None,
                 },
@@ -114,10 +147,28 @@ impl Response {
                             Bytes::from_static(b"server"),
                             Bytes::from_static(SERVER_NAME),
                         ),
+                        (
+                            Bytes::from_static(b"content-length"),
+                            Bytes::from_static(b"0"),
+                        ),
                     ],
                     body: None,
                 },
             },
+        }
+    }
+
+    pub fn get_code_string(&self) -> &'static str {
+        match self.code {
+            200 => "OK",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            _ => {
+                error!("Unknown http code: {}", self.code);
+                "Internal Server Error"
+            }
         }
     }
 }
