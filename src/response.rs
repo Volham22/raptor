@@ -14,6 +14,29 @@ pub struct Response {
 }
 
 impl Response {
+    pub fn bad_request() -> Self {
+        Self {
+            code: 400,
+            headers: vec![
+                (
+                    Bytes::from_static(b"date"),
+                    Bytes::copy_from_slice(
+                        format!("{}", chrono::Utc::now().format(DATE_FMT_STR)).as_bytes(),
+                    ),
+                ),
+                (
+                    Bytes::from_static(b"content-length"),
+                    Bytes::from_static(b"0"),
+                ),
+                (
+                    Bytes::from_static(b"server"),
+                    Bytes::from_static(SERVER_NAME),
+                ),
+            ],
+            body: None,
+        }
+    }
+
     pub fn from_io_result(value: io::Result<Option<Bytes>>, extension: &str) -> Self {
         match value {
             Ok(Some(body)) => Self {

@@ -71,7 +71,9 @@ pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) ->
             },
             Err(err) => {
                 error!("Failed to parse http request: {}", err);
-                todo!("Send bad request (400)");
+                trace!("Replying bad request and closing connection!");
+                send_response(stream, Response::bad_request()).await?;
+                break; // We're closing connection after bad request.
             }
         }
     }
