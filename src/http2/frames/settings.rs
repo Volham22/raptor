@@ -109,6 +109,13 @@ impl Settings {
             .find(|f| f.0 == SettingKind::InitialWindowSize)
             .map(|f| f.1)
     }
+
+    pub fn is_push_enabled(&self) -> Option<u32> {
+        self.flags
+            .iter()
+            .find(|f| f.0 == SettingKind::EnablePush)
+            .map(|f| f.1)
+    }
 }
 
 impl ResponseSerialize for Settings {

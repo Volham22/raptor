@@ -65,6 +65,8 @@ pub enum ConnectionError {
     HeaderOnStreamZero,
     #[error("Priority frame on stream `0`")]
     PriorityFrameOnStreamZero,
+    #[error("Invalid setting value")]
+    InvalidSettingValue(u32),
 }
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -372,6 +374,12 @@ pub async fn do_connection_loop(
                 };
 
                 info!("settings: {:?}", settings);
+
+                if let Some(value) = settings.is_push_enabled() {
+                    if value != 0 && value != 1 {
+                        return Err(ConnectionError::InvalidSettingValue(value));
+                    }
+                }
 
                 let setting_frame_size = settings.get_max_frame_size();
                 if setting_frame_size != max_frame_size {
