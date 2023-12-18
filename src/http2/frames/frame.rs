@@ -1,7 +1,8 @@
 use thiserror::Error;
 
 pub const FRAME_HEADER_LENGTH: usize = 9;
-pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16384; // 2^14
+pub const MAX_FRAME_SIZE: u32 = (1 << 24) - 1;
+pub const MIN_FRAME_SIZE: u32 = 1 << 14;
 
 #[derive(Error, Debug)]
 pub enum FrameError {

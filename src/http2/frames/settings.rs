@@ -5,7 +5,7 @@ use tracing::warn;
 
 use crate::http2::response::ResponseSerialize;
 
-use super::{FrameError, DEFAULT_MAX_FRAME_SIZE};
+use super::{FrameError, MIN_FRAME_SIZE};
 
 const TUPLE_LENGTH: usize = size_of::<u16>() + size_of::<u32>();
 
@@ -100,7 +100,7 @@ impl Settings {
             .iter()
             .find(|f| f.0 == SettingKind::MaxFrameSize)
             .map(|f| f.1) // map to value
-            .unwrap_or(DEFAULT_MAX_FRAME_SIZE)
+            .unwrap_or(MIN_FRAME_SIZE)
     }
 
     pub fn get_initial_window_size(&self) -> Option<u32> {

@@ -286,7 +286,7 @@ pub async fn do_connection_loop(
     let mut decoder = hpack::Decoder::new();
     let mut encoder = hpack::Encoder::new();
     let mut stream_manager = stream::StreamManager::new();
-    let mut max_frame_size: u32 = frames::DEFAULT_MAX_FRAME_SIZE;
+    let mut max_frame_size: u32 = frames::MIN_FRAME_SIZE;
     let mut global_window_size: u32 = 65535;
 
     loop {
@@ -384,6 +384,10 @@ pub async fn do_connection_loop(
                 }
 
                 let setting_frame_size = settings.get_max_frame_size();
+                if setting_frame_size < frames::MIN_FRAME_SIZE || setting_frame_size > frames::MAX_FRAME_SIZE {
+                    return Err(ConnectionError::InvalidSettingValue(setting_frame_size));
+                }
+
                 if setting_frame_size != max_frame_size {
                     trace!("Set new max frame size to: {}", setting_frame_size);
                     max_frame_size = setting_frame_size;
