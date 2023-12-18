@@ -57,6 +57,8 @@ pub enum ConnectionError {
     WindowUpdateTooBig,
     #[error("Received frame is too big")]
     FrameTooBig { actual: u32, max_frame_size: u32 },
+    #[error("Data frame on stream `0`")]
+    DataOnStreamZero,
 }
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -319,7 +321,7 @@ pub async fn do_connection_loop(
         info!("received frame: {:?}", frame);
 
         match frame.frame_type {
-            // TODO: We may want to add a timeout for settings frames. As adviced by RFC 9113
+            // TODO: We may want to add a timeout for settings frames. As advised by RFC 9113
             FrameType::Settings => {
                 // Settings for a stream other than 0 are not allowed
                 if frame.stream_identifier != 0 {
@@ -615,6 +617,13 @@ pub async fn do_connection_loop(
                 buffer.advance(FRAME_HEADER_LENGTH + 4);
             }
             FrameType::Data => {
+                // RFC 9113 6.1: `If a DATA frame is received whose Stream
+                // Identifier field is 0x00, the recipient MUST respond with a
+                // connection error`
+                if frame.stream_identifier == 0 {
+                    return Err(ConnectionError::DataOnStreamZero);
+                }
+
                 warn!(
                     "Got data frame. Its content will be ignored the server does not support it."
                 );
