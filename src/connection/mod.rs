@@ -3,7 +3,7 @@ use std::io;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
-use tracing::{debug, error};
+use tracing::{debug, error, info, trace};
 
 mod http11;
 mod http2;
@@ -31,8 +31,9 @@ pub async fn do_connection(
             Ok(())
         }
         None => {
-            error!("No protocol negociated via APLN! Closing connection");
-            Ok(())
+            info!("No protocol negociated via APLN! Using HTTP/1.1 as default.");
+            trace!("Does the client support it?");
+            http11::do_http11(stream, config).await
         }
     }
 }
