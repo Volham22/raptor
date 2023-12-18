@@ -47,8 +47,10 @@ pub enum ConnectionError {
     BadPingFrameSize,
     #[error("Window update of 0")]
     ZeroWindowUpdate,
-    #[error("Window update frame lenght is incorrect: ({0} != 4)")]
+    #[error("Window update frame length is incorrect: ({0} != 4)")]
     BadLengthWindowUpdate(u32),
+    #[error("Prority frame length is incorrect: ({0} != 5)")]
+    BadLengthPriorityFrame(u32),
     #[error("Bad request received")]
     BadRequest,
     #[error("Bad connection preface")]
@@ -61,6 +63,8 @@ pub enum ConnectionError {
     DataOnStreamZero,
     #[error("Header frame on stream `0`")]
     HeaderOnStreamZero,
+    #[error("Priority frame on stream `0`")]
+    PriorityFrameOnStreamZero,
 }
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -592,6 +596,15 @@ pub async fn do_connection_loop(
             }
             FrameType::Priority => {
                 info!("Priority received: {:?}", frame);
+                if frame.stream_identifier == 0 {
+                    debug!("Received priority frame on stream `0`");
+                    return Err(ConnectionError::PriorityFrameOnStreamZero);
+                }
+
+                if frame.length != 5 {
+                    return Err(ConnectionError::BadLengthPriorityFrame(frame.length));
+                }
+
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Continuation => {

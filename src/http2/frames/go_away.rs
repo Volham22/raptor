@@ -53,6 +53,7 @@ impl From<ConnectionError> for ErrorType {
             ConnectionError::IOError(_) => unreachable!(),
             ConnectionError::NonZeroSettingsAckLength
             | ConnectionError::BadLengthWindowUpdate(_)
+            | ConnectionError::BadLengthPriorityFrame(_)
             | ConnectionError::BadPingFrameSize
             | ConnectionError::FrameTooBig { .. }
             | ConnectionError::SettingsLengthNotMultipleOf6 => ErrorType::FrameSizeError,
