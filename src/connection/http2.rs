@@ -96,6 +96,7 @@ pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> Connect
         .write_all(data)
         .await
         .map_err(ConnectionError::IOError)?;
+
     stream.flush().await.map_err(ConnectionError::IOError)
 }
 
@@ -745,7 +746,7 @@ pub async fn do_http2(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> 
     match send_server_setting(&mut stream).await {
         Ok(()) => (),
         Err(ConnectionError::IOError(e)) => return Err(e),
-        Err(err) => send_go_away(&mut stream, err).await?,
+        Err(err) => return send_go_away(&mut stream, err).await,
     }
 
     match do_connection_loop(&mut stream, &config, buffer).await {
