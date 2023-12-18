@@ -106,7 +106,7 @@ impl Settings {
     pub fn get_initial_window_size(&self) -> Option<u32> {
         self.flags
             .iter()
-            .find(|f| f.0 == SettingKind::InitialWindowSize)
+            .rfind(|f| f.0 == SettingKind::InitialWindowSize)
             .map(|f| f.1)
     }
 
