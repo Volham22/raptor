@@ -13,7 +13,7 @@ use crate::{
     http2::{
         frames::{self, FrameType, FRAME_HEADER_LENGTH, PING_LENGTH},
         response::{build_frame_header, ResponseSerialize},
-        stream::StreamManager,
+        stream,
     },
 };
 
@@ -67,6 +67,8 @@ pub enum ConnectionError {
     PriorityFrameOnStreamZero,
     #[error("Invalid setting value")]
     InvalidSettingValue(u32),
+    #[error("Invalid Initial window size: {0:}")]
+    BadInitialWindowSize(u32),
 }
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -283,7 +285,7 @@ pub async fn do_connection_loop(
 ) -> ConnectionResult<()> {
     let mut decoder = hpack::Decoder::new();
     let mut encoder = hpack::Encoder::new();
-    let mut stream_manager = StreamManager::new();
+    let mut stream_manager = stream::StreamManager::new();
     let mut max_frame_size: u32 = frames::DEFAULT_MAX_FRAME_SIZE;
     let mut global_window_size: u32 = 65535;
 
@@ -388,6 +390,10 @@ pub async fn do_connection_loop(
                 }
 
                 if let Some(size) = settings.get_initial_window_size() {
+                    if size as u64 > stream::MAX_WINDOW_SIZE {
+                        return Err(ConnectionError::BadInitialWindowSize(size));
+                    }
+
                     trace!("Change initial window size to {size}");
                     stream_manager.set_initial_window_size(size);
                 }

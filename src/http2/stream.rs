@@ -19,7 +19,7 @@ use super::{
 };
 
 pub(crate) const INITIAL_WINDOW_SIZE: u32 = 65535;
-const MAX_WINDOW_SIZE: u64 = 2147483647; // 2**31 - 1
+pub(crate) const MAX_WINDOW_SIZE: u64 = (1 << 31) - 1; // 2**31 - 1
 
 #[derive(Debug, PartialEq)]
 enum StreamState {

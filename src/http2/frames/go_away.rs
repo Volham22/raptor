@@ -49,7 +49,9 @@ impl Display for ErrorType {
 impl From<ConnectionError> for ErrorType {
     fn from(value: ConnectionError) -> ErrorType {
         match value {
-            ConnectionError::WindowUpdateTooBig => ErrorType::FlowControlError,
+            ConnectionError::WindowUpdateTooBig | ConnectionError::BadInitialWindowSize(_) => {
+                ErrorType::FlowControlError
+            }
             ConnectionError::IOError(_) => unreachable!(),
             ConnectionError::NonZeroSettingsAckLength
             | ConnectionError::BadLengthWindowUpdate(_)
