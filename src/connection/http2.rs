@@ -59,6 +59,8 @@ pub enum ConnectionError {
     FrameTooBig { actual: u32, max_frame_size: u32 },
     #[error("Data frame on stream `0`")]
     DataOnStreamZero,
+    #[error("Header frame on stream `0`")]
+    HeaderOnStreamZero,
 }
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -519,6 +521,11 @@ pub async fn do_connection_loop(
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Headers => {
+                if frame.stream_identifier == 0 {
+                    debug!("Header received on stream `0`");
+                    return Err(ConnectionError::HeaderOnStreamZero);
+                }
+
                 match receive_headers(stream, &mut buffer, &mut decoder, &frame, max_frame_size)
                     .await
                 {
