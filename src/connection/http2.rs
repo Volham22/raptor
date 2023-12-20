@@ -288,7 +288,7 @@ pub async fn do_connection_loop(
     let mut encoder = hpack::Encoder::new();
     let mut stream_manager = stream::StreamManager::new();
     let mut max_frame_size: u32 = frames::MIN_FRAME_SIZE;
-    let mut global_window_size: u32 = 65535;
+    let mut global_window_size: i64 = 65535;
 
     loop {
         let frame_result = frames::Frame::try_from_bytes(buffer.as_ref(), max_frame_size);
@@ -385,7 +385,9 @@ pub async fn do_connection_loop(
                 }
 
                 let setting_frame_size = settings.get_max_frame_size();
-                if setting_frame_size < frames::MIN_FRAME_SIZE || setting_frame_size > frames::MAX_FRAME_SIZE {
+                if setting_frame_size < frames::MIN_FRAME_SIZE
+                    || setting_frame_size > frames::MAX_FRAME_SIZE
+                {
                     return Err(ConnectionError::InvalidSettingValue(setting_frame_size));
                 }
 
@@ -395,12 +397,12 @@ pub async fn do_connection_loop(
                 }
 
                 if let Some(size) = settings.get_initial_window_size() {
-                    if size as u64 > stream::MAX_WINDOW_SIZE {
+                    if size as i64 > stream::MAX_WINDOW_SIZE {
                         return Err(ConnectionError::BadInitialWindowSize(size));
                     }
 
                     trace!("Change initial window size to {size}");
-                    stream_manager.set_initial_window_size(size);
+                    stream_manager.set_initial_window_size(size as i64);
                 }
 
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
@@ -447,9 +449,9 @@ pub async fn do_connection_loop(
 
                 match stream_manager.get_at_mut(frame.stream_identifier) {
                     Some(st) if st.identifier == 0 => {
-                        global_window_size += window_update.0;
+                        global_window_size += window_update.0 as i64;
                         trace!("Global window is now at {global_window_size}");
-                        match st.update_window(window_update.0 as u64) {
+                        match st.update_window(window_update.0 as i64) {
                             Err(_) if frame.stream_identifier == 0 => {
                                 return Err(ConnectionError::WindowUpdateTooBig);
                             }
@@ -468,7 +470,7 @@ pub async fn do_connection_loop(
                         };
                     }
                     Some(st) => {
-                        match st.update_window(window_update.0 as u64) {
+                        match st.update_window(window_update.0 as i64) {
                             Err(_) if frame.stream_identifier == 0 => {
                                 return Err(ConnectionError::WindowUpdateTooBig);
                             }
@@ -504,7 +506,7 @@ pub async fn do_connection_loop(
                         match stream_manager
                             .get_at_mut(frame.stream_identifier)
                             .unwrap()
-                            .update_window(window_update.0 as u64)
+                            .update_window(window_update.0 as i64)
                         {
                             Err(_) if frame.stream_identifier == 0 => {
                                 return Err(ConnectionError::WindowUpdateTooBig);
@@ -524,7 +526,7 @@ pub async fn do_connection_loop(
                         }
 
                         if frame.stream_identifier == 0 {
-                            global_window_size += window_update.0;
+                            global_window_size += window_update.0 as i64;
                             trace!("Global window size is now {global_window_size}");
                         }
                     }

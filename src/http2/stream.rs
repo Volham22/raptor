@@ -18,8 +18,8 @@ use super::{
     response::build_frame_header,
 };
 
-pub(crate) const INITIAL_WINDOW_SIZE: u32 = 65535;
-pub(crate) const MAX_WINDOW_SIZE: u64 = (1 << 31) - 1; // 2**31 - 1
+pub(crate) const INITIAL_WINDOW_SIZE: i64 = 65535;
+pub(crate) const MAX_WINDOW_SIZE: i64 = (1 << 31) - 1; // 2**31 - 1
 
 #[derive(Debug, PartialEq)]
 enum StreamState {
@@ -44,14 +44,14 @@ pub enum StreamError {}
 #[derive(Debug, Default)]
 pub struct Stream {
     pub identifier: u32,
-    window_space: u64,
+    window_space: i64,
     state: StreamState,
     request_headers: Option<Headers>,
     data_to_send: Option<Bytes>,
 }
 
 impl Stream {
-    pub fn new(identifier: u32, initial_window_size: u64) -> Self {
+    pub fn new(identifier: u32, initial_window_size: i64) -> Self {
         Self {
             identifier,
             window_space: initial_window_size,
@@ -61,7 +61,11 @@ impl Stream {
         }
     }
 
-    pub fn update_window(&mut self, space: u64) -> Result<(), FrameError> {
+    pub fn set_window_space(&mut self, size: i64) {
+        self.window_space = size;
+    }
+
+    pub fn update_window(&mut self, space: i64) -> Result<(), FrameError> {
         debug!(
             "stream {}: value after update {} (valid: {})",
             self.identifier,
@@ -101,7 +105,7 @@ impl Stream {
         &mut self,
         stream: &mut TlsStream<TcpStream>,
         max_frame_size: usize,
-        global_window_size: &mut u32,
+        global_window_size: &mut i64,
         config: &Arc<Config>,
         encoder: &mut hpack::Encoder<'_>,
     ) -> ConnectionResult<()> {
@@ -149,7 +153,7 @@ impl Stream {
     pub async fn try_send_data_payload(
         &mut self,
         stream: &mut TlsStream<TcpStream>,
-        global_window_size: &mut u32,
+        global_window_size: &mut i64,
         max_frame_size: usize,
     ) -> ConnectionResult<()> {
         let data_frame_count = self
@@ -205,8 +209,8 @@ impl Stream {
                 self.window_space = window_space;
                 return Ok(());
             } else {
-                window_space -= chunk.len() as u64;
-                *global_window_size -= chunk.len() as u32;
+                window_space -= chunk.len() as i64;
+                *global_window_size -= chunk.len() as i64;
             }
 
             let mut data_frame = frames::Data::new(Bytes::copy_from_slice(chunk));
@@ -255,7 +259,7 @@ impl Stream {
         Ok(())
     }
 
-    pub fn reset(&mut self, initial_window_size: u64) {
+    pub fn reset(&mut self, initial_window_size: i64) {
         self.window_space = initial_window_size;
         self.mark_as_closed();
         self.request_headers = None;
@@ -269,7 +273,7 @@ impl Stream {
 #[derive(Debug)]
 pub struct StreamManager {
     streams: HashMap<u32, Stream>,
-    initial_window_size: u32,
+    initial_window_size: i64,
 }
 
 impl StreamManager {
@@ -280,14 +284,19 @@ impl StreamManager {
         }
     }
 
-    pub fn set_initial_window_size(&mut self, size: u32) {
+    pub fn set_initial_window_size(&mut self, size: i64) {
+
+        for stream in self.streams.values_mut() {
+            stream.set_window_space(size - self.initial_window_size);
+        }
+
         self.initial_window_size = size;
     }
 
     pub async fn try_send_data_all_stream(
         &mut self,
         tls_stream: &mut TlsStream<TcpStream>,
-        global_window_size: &mut u32,
+        global_window_size: &mut i64,
         max_frame_size: usize,
     ) -> ConnectionResult<()> {
         for stream in self.streams.iter_mut() {
@@ -331,10 +340,10 @@ impl StreamManager {
     pub fn register_new_stream(&mut self, index: u32) {
         trace!("Register new stream at index: {index}");
         self.streams
-            .insert(index, Stream::new(index, self.initial_window_size as u64));
+            .insert(index, Stream::new(index, self.initial_window_size));
     }
 
-    pub fn get_initial_window_size(&self) -> u64 {
-        self.initial_window_size.into()
+    pub fn get_initial_window_size(&self) -> i64 {
+        self.initial_window_size
     }
 }
