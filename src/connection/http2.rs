@@ -13,7 +13,7 @@ use crate::{
     http2::{
         frames::{self, FrameType, FRAME_HEADER_LENGTH, PING_LENGTH},
         response::{build_frame_header, ResponseSerialize},
-        stream::StreamManager,
+        stream,
     },
 };
 
@@ -47,8 +47,10 @@ pub enum ConnectionError {
     BadPingFrameSize,
     #[error("Window update of 0")]
     ZeroWindowUpdate,
-    #[error("Window update frame lenght is incorrect: ({0} != 4)")]
+    #[error("Window update frame length is incorrect: ({0} != 4)")]
     BadLengthWindowUpdate(u32),
+    #[error("Prority frame length is incorrect: ({0} != 5)")]
+    BadLengthPriorityFrame(u32),
     #[error("Bad request received")]
     BadRequest,
     #[error("Bad connection preface")]
@@ -57,6 +59,16 @@ pub enum ConnectionError {
     WindowUpdateTooBig,
     #[error("Received frame is too big")]
     FrameTooBig { actual: u32, max_frame_size: u32 },
+    #[error("Data frame on stream `0`")]
+    DataOnStreamZero,
+    #[error("Header frame on stream `0`")]
+    HeaderOnStreamZero,
+    #[error("Priority frame on stream `0`")]
+    PriorityFrameOnStreamZero,
+    #[error("Invalid setting value")]
+    InvalidSettingValue(u32),
+    #[error("Invalid Initial window size: {0:}")]
+    BadInitialWindowSize(u32),
 }
 
 pub(crate) type ConnectionResult<T> = Result<T, ConnectionError>;
@@ -84,6 +96,7 @@ pub async fn send_all(stream: &mut TlsStream<TcpStream>, data: &[u8]) -> Connect
         .write_all(data)
         .await
         .map_err(ConnectionError::IOError)?;
+
     stream.flush().await.map_err(ConnectionError::IOError)
 }
 
@@ -273,9 +286,9 @@ pub async fn do_connection_loop(
 ) -> ConnectionResult<()> {
     let mut decoder = hpack::Decoder::new();
     let mut encoder = hpack::Encoder::new();
-    let mut stream_manager = StreamManager::new();
-    let mut max_frame_size: u32 = frames::DEFAULT_MAX_FRAME_SIZE;
-    let mut global_window_size: u32 = 65535;
+    let mut stream_manager = stream::StreamManager::new();
+    let mut max_frame_size: u32 = frames::MIN_FRAME_SIZE;
+    let mut global_window_size: i64 = 65535;
 
     loop {
         let frame_result = frames::Frame::try_from_bytes(buffer.as_ref(), max_frame_size);
@@ -319,7 +332,7 @@ pub async fn do_connection_loop(
         info!("received frame: {:?}", frame);
 
         match frame.frame_type {
-            // TODO: We may want to add a timeout for settings frames. As adviced by RFC 9113
+            // TODO: We may want to add a timeout for settings frames. As advised by RFC 9113
             FrameType::Settings => {
                 // Settings for a stream other than 0 are not allowed
                 if frame.stream_identifier != 0 {
@@ -365,15 +378,31 @@ pub async fn do_connection_loop(
 
                 info!("settings: {:?}", settings);
 
+                if let Some(value) = settings.is_push_enabled() {
+                    if value != 0 && value != 1 {
+                        return Err(ConnectionError::InvalidSettingValue(value));
+                    }
+                }
+
                 let setting_frame_size = settings.get_max_frame_size();
+                if setting_frame_size < frames::MIN_FRAME_SIZE
+                    || setting_frame_size > frames::MAX_FRAME_SIZE
+                {
+                    return Err(ConnectionError::InvalidSettingValue(setting_frame_size));
+                }
+
                 if setting_frame_size != max_frame_size {
                     trace!("Set new max frame size to: {}", setting_frame_size);
                     max_frame_size = setting_frame_size;
                 }
 
                 if let Some(size) = settings.get_initial_window_size() {
+                    if size as i64 > stream::MAX_WINDOW_SIZE {
+                        return Err(ConnectionError::BadInitialWindowSize(size));
+                    }
+
                     trace!("Change initial window size to {size}");
-                    stream_manager.set_initial_window_size(size);
+                    stream_manager.set_initial_window_size(size as i64);
                 }
 
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
@@ -420,9 +449,9 @@ pub async fn do_connection_loop(
 
                 match stream_manager.get_at_mut(frame.stream_identifier) {
                     Some(st) if st.identifier == 0 => {
-                        global_window_size += window_update.0;
+                        global_window_size += window_update.0 as i64;
                         trace!("Global window is now at {global_window_size}");
-                        match st.update_window(window_update.0 as u64) {
+                        match st.update_window(window_update.0 as i64) {
                             Err(_) if frame.stream_identifier == 0 => {
                                 return Err(ConnectionError::WindowUpdateTooBig);
                             }
@@ -441,7 +470,7 @@ pub async fn do_connection_loop(
                         };
                     }
                     Some(st) => {
-                        match st.update_window(window_update.0 as u64) {
+                        match st.update_window(window_update.0 as i64) {
                             Err(_) if frame.stream_identifier == 0 => {
                                 return Err(ConnectionError::WindowUpdateTooBig);
                             }
@@ -477,7 +506,7 @@ pub async fn do_connection_loop(
                         match stream_manager
                             .get_at_mut(frame.stream_identifier)
                             .unwrap()
-                            .update_window(window_update.0 as u64)
+                            .update_window(window_update.0 as i64)
                         {
                             Err(_) if frame.stream_identifier == 0 => {
                                 return Err(ConnectionError::WindowUpdateTooBig);
@@ -497,7 +526,7 @@ pub async fn do_connection_loop(
                         }
 
                         if frame.stream_identifier == 0 {
-                            global_window_size += window_update.0;
+                            global_window_size += window_update.0 as i64;
                             trace!("Global window size is now {global_window_size}");
                         }
                     }
@@ -517,6 +546,11 @@ pub async fn do_connection_loop(
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Headers => {
+                if frame.stream_identifier == 0 {
+                    debug!("Header received on stream `0`");
+                    return Err(ConnectionError::HeaderOnStreamZero);
+                }
+
                 match receive_headers(stream, &mut buffer, &mut decoder, &frame, max_frame_size)
                     .await
                 {
@@ -583,6 +617,15 @@ pub async fn do_connection_loop(
             }
             FrameType::Priority => {
                 info!("Priority received: {:?}", frame);
+                if frame.stream_identifier == 0 {
+                    debug!("Received priority frame on stream `0`");
+                    return Err(ConnectionError::PriorityFrameOnStreamZero);
+                }
+
+                if frame.length != 5 {
+                    return Err(ConnectionError::BadLengthPriorityFrame(frame.length));
+                }
+
                 buffer.advance(FRAME_HEADER_LENGTH + frame.length as usize); // consume current frame
             }
             FrameType::Continuation => {
@@ -615,6 +658,13 @@ pub async fn do_connection_loop(
                 buffer.advance(FRAME_HEADER_LENGTH + 4);
             }
             FrameType::Data => {
+                // RFC 9113 6.1: `If a DATA frame is received whose Stream
+                // Identifier field is 0x00, the recipient MUST respond with a
+                // connection error`
+                if frame.stream_identifier == 0 {
+                    return Err(ConnectionError::DataOnStreamZero);
+                }
+
                 warn!(
                     "Got data frame. Its content will be ignored the server does not support it."
                 );
@@ -698,7 +748,7 @@ pub async fn do_http2(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> 
     match send_server_setting(&mut stream).await {
         Ok(()) => (),
         Err(ConnectionError::IOError(e)) => return Err(e),
-        Err(err) => send_go_away(&mut stream, err).await?,
+        Err(err) => return send_go_away(&mut stream, err).await,
     }
 
     match do_connection_loop(&mut stream, &config, buffer).await {
