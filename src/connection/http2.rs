@@ -385,8 +385,7 @@ pub async fn do_connection_loop(
                 }
 
                 let setting_frame_size = settings.get_max_frame_size();
-                if setting_frame_size < frames::MIN_FRAME_SIZE
-                    || setting_frame_size > frames::MAX_FRAME_SIZE
+                if !(frames::MIN_FRAME_SIZE..=frames::MAX_FRAME_SIZE).contains(&setting_frame_size)
                 {
                     return Err(ConnectionError::InvalidSettingValue(setting_frame_size));
                 }
