@@ -285,7 +285,6 @@ impl StreamManager {
     }
 
     pub fn set_initial_window_size(&mut self, size: i64) {
-
         for stream in self.streams.values_mut() {
             stream.set_window_space(size - self.initial_window_size);
         }

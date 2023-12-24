@@ -66,6 +66,7 @@ pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) ->
                 }
                 httparse::Status::Partial => {
                     trace!("Request partially received keep reading...");
+                    debug!("Got: {:?}", &buffer);
                     continue;
                 }
             },
