@@ -8,7 +8,6 @@ use tracing::{debug, error, info, trace};
 mod http11;
 mod http2;
 
-pub use http11::*;
 pub use http2::*;
 
 pub async fn do_connection(

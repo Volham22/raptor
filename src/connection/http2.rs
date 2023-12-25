@@ -6,7 +6,7 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_rustls::server::TlsStream;
-use tracing::{debug, error, info, trace, warn, event, Level};
+use tracing::{debug, error, event, info, trace, warn, Level};
 
 use crate::{
     config::Config,
