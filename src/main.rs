@@ -105,7 +105,7 @@ async fn main() -> io::Result<()> {
         tokio::spawn(async move {
             info!("Started connection handling for {client_addr:?}");
             let fut = async move {
-                // client_socket.set_nodelay(true)?;
+                client_socket.set_nodelay(true)?;
                 do_connection(acceptor, client_socket, thread_conf).await
             };
 
