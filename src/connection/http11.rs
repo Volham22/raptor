@@ -49,7 +49,7 @@ pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) ->
     trace!("Started HTTP/1.1 handling");
 
     loop {
-        let _ = stream.read_buf(&mut buffer).await?;
+        let read_size = stream.read_buf(&mut buffer).await?;
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
 
@@ -63,6 +63,14 @@ pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) ->
                     send_response(stream, response).await?;
 
                     break;
+                }
+                httparse::Status::Partial if read_size == 0 => {
+                    if read_size == 0 {
+                        debug!("Received 0 bytes. Reached EOF.");
+                        trace!("Send bad request response.");
+                        send_response(stream, Response::bad_request()).await?;
+                        break;
+                    }
                 }
                 httparse::Status::Partial => {
                     trace!("Request partially received keep reading...");
