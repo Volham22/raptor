@@ -6,7 +6,7 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_rustls::server::TlsStream;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn, event, Level};
 
 use crate::{
     config::Config,
@@ -329,7 +329,7 @@ pub async fn do_connection_loop(
             }
         };
 
-        info!("received frame: {:?}", frame);
+        event!(Level::INFO, "received frame: {:?}", frame);
 
         match frame.frame_type {
             // TODO: We may want to add a timeout for settings frames. As advised by RFC 9113

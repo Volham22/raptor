@@ -4,7 +4,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, event, trace, Level};
 
 use crate::{
     config::Config,
@@ -132,7 +132,11 @@ impl Stream {
                     Some(encoder),
                 );
 
-                trace!("Send response header frame: {:?}", header_frame);
+                event!(
+                    Level::TRACE,
+                    "Send response header frame: {:?}",
+                    header_frame
+                );
                 send_all(stream, serialize_buffer.as_ref()).await?;
 
                 if let Some(body) = response.body {
