@@ -44,6 +44,7 @@ async fn send_response(mut stream: TlsStream<TcpStream>, response: Response) -> 
     Ok(())
 }
 
+#[tracing::instrument(level = "info")]
 pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::Result<()> {
     let mut buffer = BytesMut::with_capacity(1024);
     trace!("Started HTTP/1.1 handling");

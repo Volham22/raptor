@@ -727,6 +727,7 @@ pub async fn do_connection_loop(
     Ok(())
 }
 
+#[tracing::instrument(level = "info")]
 pub async fn do_http2(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::Result<()> {
     let mut buffer = BytesMut::new();
     trace!("Do http2 connection");

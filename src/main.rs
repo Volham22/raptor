@@ -8,7 +8,7 @@ use tokio_rustls::{
     rustls::{self, Certificate, PrivateKey},
     TlsAcceptor,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, warn, Instrument};
 
 mod config;
 mod connection;
@@ -100,6 +100,7 @@ async fn main() -> io::Result<()> {
         let acceptor = acceptor.clone();
         info!("New client connection from {client_addr:?}");
         let thread_conf = conf.clone();
+        let connection_span = info_span!("Connection handler");
 
         tokio::spawn(async move {
             info!("Started connection handling for {client_addr:?}");
@@ -108,7 +109,7 @@ async fn main() -> io::Result<()> {
                 do_connection(acceptor, client_socket, thread_conf).await
             };
 
-            if let Err(err) = fut.await {
+            if let Err(err) = fut.instrument(connection_span).await {
                 warn!("client connection handler error: {:?}", err);
             }
         });

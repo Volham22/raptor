@@ -37,7 +37,7 @@ pub enum ConfigError {
     AbsoluteDefaultFile(path::PathBuf),
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub ip: IpAddr,
     pub port: u16,
