@@ -4,6 +4,7 @@ use clap::Parser;
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::fs;
+use tracing::info;
 
 const DEFAULT_VALUE_DEFAULT_FILE: &str = "index.html";
 
@@ -45,6 +46,7 @@ pub struct Config {
     pub key_path: path::PathBuf,
     pub root_dir: path::PathBuf,
     pub default_file: Option<path::PathBuf>,
+    pub log_file: Option<path::PathBuf>,
 }
 
 pub async fn read_config_from_file(path: &path::Path) -> Result<String, ConfigError> {
@@ -55,7 +57,7 @@ pub async fn read_config_from_file(path: &path::Path) -> Result<String, ConfigEr
 }
 
 impl Config {
-    pub fn from_yaml_str(config: &str) -> Result<Config, ConfigError> {
+    pub async fn from_yaml_str(config: &str) -> Result<Config, ConfigError> {
         let result: Config = serde_yaml::from_str(config).map_err(ConfigError::BadYaml)?;
 
         if result.root_dir.is_file() {
@@ -64,6 +66,10 @@ impl Config {
 
         if result.root_dir.is_relative() {
             return Err(ConfigError::RootPathNotAbsolute(result.root_dir));
+        }
+
+        if let Some(log_file) = result.log_file.as_ref() {
+            info!("Logging at: {}", log_file.to_str().unwrap());
         }
 
         if let Some(default_file) = result.default_file.as_ref() {

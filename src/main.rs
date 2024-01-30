@@ -3,7 +3,7 @@ use std::{fs::File, io, net::SocketAddr, path::Path, sync::Arc};
 use clap::Parser;
 use connection::do_connection;
 use rustls_pemfile::{read_all, rsa_private_keys};
-use tokio::net::TcpListener;
+use tokio::{fs, net::TcpListener};
 use tokio_rustls::{
     rustls::{self, Certificate, PrivateKey},
     TlsAcceptor,
@@ -14,6 +14,7 @@ mod config;
 mod connection;
 mod http11;
 mod http2;
+mod logging;
 mod method_handlers;
 mod request;
 mod response;
@@ -48,9 +49,6 @@ fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli_conf = config::CliConfig::parse();
-    tracing_subscriber::fmt()
-        .with_max_level(cli_conf.level)
-        .init();
 
     let config_file_content = match config::read_config_from_file(&cli_conf.config).await {
         Ok(c) => c,
@@ -60,7 +58,7 @@ async fn main() -> io::Result<()> {
         }
     };
 
-    let conf = match config::Config::from_yaml_str(&config_file_content) {
+    let conf = match config::Config::from_yaml_str(&config_file_content).await {
         Ok(c) => Arc::new(c),
         Err(err) => {
             error!("Error while loading configuration file: {}", err);
@@ -69,6 +67,31 @@ async fn main() -> io::Result<()> {
     };
 
     info!("Begin of server");
+
+    if let Some(log_file) = conf.as_ref().log_file.as_ref() {
+        fs::File::create(log_file).await?;
+        let mut full_path = log_file.canonicalize()?;
+        fs::remove_file(log_file).await?;
+
+        full_path.pop();
+        let appender = tracing_appender::rolling::minutely(
+            full_path,
+            log_file
+                .file_name()
+                .expect("Failed to get file name from log path")
+                .to_str()
+                .expect("Failed to convert log file path to str"),
+        );
+        logging::init_logging_file(&cli_conf, appender);
+        info!(
+            "Init logging to file: {}",
+            log_file
+                .to_str()
+                .expect("Failed to convert log file to str")
+        );
+    } else {
+        logging::init_logging(&cli_conf);
+    }
 
     let addr = SocketAddr::new(conf.ip, conf.port);
     debug!("Created sockaddr");
