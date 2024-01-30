@@ -41,6 +41,7 @@ root_dir: /srv
 | key_path     | Path to a RSA private key                                              | Yes       |               |
 | root_dir     | An absolute path to the directory from where your files will be served | Yes       |               |
 | default_file | Default file to use                                                    | No        | index.html    |
+| log_file     | An absolute path to the file the server should log.                    | No        | Log to stdout |
 
 ## Known limitations
 
