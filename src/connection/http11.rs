@@ -6,13 +6,13 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_rustls::server::TlsStream;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, event, info, trace, Level};
 
 use crate::{config::Config, http11, method_handlers::handle_request, response::Response};
 
 async fn send_response(mut stream: TlsStream<TcpStream>, response: Response) -> io::Result<()> {
     const CRLF: &[u8; 2] = b"\r\n";
-    trace!("Sending response");
+    event!(Level::TRACE, "Sending response");
 
     let mut buffer = BytesMut::with_capacity(128);
     buffer
@@ -44,9 +44,10 @@ async fn send_response(mut stream: TlsStream<TcpStream>, response: Response) -> 
     Ok(())
 }
 
+#[tracing::instrument(level = "info")]
 pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::Result<()> {
     let mut buffer = BytesMut::with_capacity(1024);
-    trace!("Started HTTP/1.1 handling");
+    event!(Level::TRACE, "Started HTTP/1.1 handling");
 
     loop {
         let read_size = stream.read_buf(&mut buffer).await?;
@@ -87,6 +88,9 @@ pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) ->
         }
     }
 
-    trace!("Connection handling finished. Closing connection");
+    event!(
+        Level::TRACE,
+        "Connection handling finished. Closing connection"
+    );
     Ok(())
 }
