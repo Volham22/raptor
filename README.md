@@ -18,6 +18,19 @@ To get a release build of raptor you just have to run `cargo build`. Omit the
 $ cargo build --release
 ```
 
+### Docker
+
+It's possible to run `raptor` using docker. An image is available on
+[dockerhub](https://hub.docker.com/r/volham/raptor).
+
+It's possible to run the server using this command:
+
+```sh
+docker run -v path/to/keys:/app -v path/to/html:/var/raptor/html volham/raptor
+```
+
+You can also override the default configuration located at `/etc/raptor/default.yml`.
+
 ## Configuration
 
 Raptor aims to be easy to use and use [YAML](https://fr.wikipedia.org/wiki/YAML)
