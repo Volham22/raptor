@@ -1,0 +1,5 @@
+ip: "0.0.0.0"
+port: 8000
+cert_path: "cert.pem"
+key_path: "private_key.pem"
+root_dir: /var/raptor/html
