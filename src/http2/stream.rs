@@ -111,10 +111,10 @@ impl Stream {
     ) -> ConnectionResult<()> {
         let headers = self.request_headers.as_ref().unwrap();
 
-        match headers.get_type().map_err(|e| {
-            debug!("Bad request received: {:?}", e);
-            ConnectionError::BadRequest
-        })? {
+        match headers
+            .get_type()
+            .map_err(|_| ConnectionError::BadRequest)?
+        {
             RequestType::Get => {
                 let mut response = handle_request(headers, config).await;
                 let mut serialize_buffer = BytesMut::with_capacity(8192);
