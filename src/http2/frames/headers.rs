@@ -66,7 +66,16 @@ impl Headers {
                 headers: hds
                     .into_iter()
                     .map(|(k, v)| (Bytes::from(k), Bytes::from(v)))
-                    .collect(),
+                    .map(|(k, v)| {
+                        if k.iter()
+                            .all(|c| c.is_ascii_uppercase() || c.is_ascii_punctuation())
+                        {
+                            Err(FrameError::UppercaseHeader)
+                        } else {
+                            Ok((k, v))
+                        }
+                    })
+                    .collect::<Result<Vec<(Bytes, Bytes)>, FrameError>>()?,
                 end_stream: Self::is_end_stream(flags),
             }),
             Err(err) => {

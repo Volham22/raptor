@@ -18,6 +18,8 @@ pub enum FrameError {
     WindowUpdateTooBig,
     #[error("Frame is too big ({actual} > {max_frame_size})")]
     FrameTooBig { actual: u32, max_frame_size: u32 },
+    #[error("Header frame contains uppercase header")]
+    UppercaseHeader,
     // #[error("Continuation frame without header frame")]
     // ContinuationWithoutHeader,
     // #[error("Continuation frame but END_HEADERS set")]
