@@ -51,11 +51,11 @@ impl ResponseSerialize for Ping {
         }
     }
 
-    fn serialize_response(&self, _: Option<&mut hpack::Encoder>) -> Vec<u8> {
+    fn serialize_response(&self, _: Option<&mut fluke_hpack::Encoder>) -> Vec<u8> {
         self.opaque_data.to_be_bytes().to_vec()
     }
 
-    fn compute_frame_length(&self, _: Option<&mut hpack::Encoder>) -> u32 {
+    fn compute_frame_length(&self, _: Option<&mut fluke_hpack::Encoder>) -> u32 {
         PING_LENGTH as u32
     }
 }

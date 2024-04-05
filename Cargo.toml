@@ -8,8 +8,8 @@ edition = "2021"
 [dependencies]
 bytes = "1.4.0"
 chrono = "0.4.26"
-clap = { version = "4.3.23", features = ["derive"] }
-hpack = "0.3.0"
+clap = { version = "4.5.4", features = ["derive"] }
+fluke-hpack = "0.3.0"
 httparse = "1.8.0"
 mime_guess = "2.0.4"
 rustls-pemfile = "1"

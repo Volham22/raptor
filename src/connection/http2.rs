@@ -114,7 +114,7 @@ async fn send_server_setting(stream: &mut TlsStream<TcpStream>) -> ConnectionRes
 async fn receive_headers(
     stream: &mut TlsStream<TcpStream>,
     buffer: &mut BytesMut,
-    decoder: &mut hpack::Decoder<'_>,
+    decoder: &mut fluke_hpack::Decoder<'_>,
     frame: &frames::Frame,
     max_frame_size: u32,
 ) -> ConnectionResult<frames::Headers> {
@@ -191,7 +191,7 @@ async fn receive_continuation_frames(
     stream: &mut TlsStream<TcpStream>,
     buffer: &mut BytesMut,
     headers_bytes: &mut BytesMut,
-    decoder: &mut hpack::Decoder<'_>,
+    decoder: &mut fluke_hpack::Decoder<'_>,
     frame: &frames::Frame,
     max_frame_size: u32,
 ) -> ConnectionResult<frames::Headers> {
@@ -284,8 +284,8 @@ pub async fn do_connection_loop(
     conf: &Arc<Config>,
     mut buffer: BytesMut,
 ) -> ConnectionResult<()> {
-    let mut decoder = hpack::Decoder::new();
-    let mut encoder = hpack::Encoder::new();
+    let mut decoder = fluke_hpack::Decoder::new();
+    let mut encoder = fluke_hpack::Encoder::new();
     let mut stream_manager = stream::StreamManager::new();
     let mut max_frame_size: u32 = frames::MIN_FRAME_SIZE;
     let mut global_window_size: i64 = 65535;

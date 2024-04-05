@@ -11,7 +11,7 @@ pub enum FrameError {
     #[error("Unknown frame number `{0}`")]
     UnknownFrameNumber(u8),
     #[error("HPACK decoder error: '{0:?}'")]
-    HpackDecoderError(hpack::decoder::DecoderError),
+    HpackDecoderError(fluke_hpack::decoder::DecoderError),
     #[error("Settings frame size it not a multiple of 6")]
     SettingsFrameSize(usize),
     #[error("Window update that is greater than 2^31-1")]
