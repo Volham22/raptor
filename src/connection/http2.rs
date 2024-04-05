@@ -660,7 +660,7 @@ pub async fn do_connection_loop(
                 // RFC 9113 6.1: `If a DATA frame is received whose Stream
                 // Identifier field is 0x00, the recipient MUST respond with a
                 // connection error`
-                if frame.stream_identifier == 0 {
+                if frame.stream_identifier == 0 && frame.length > 0 {
                     return Err(ConnectionError::DataOnStreamZero);
                 }
 
