@@ -29,11 +29,11 @@ impl ResetStream {
 }
 
 impl ResponseSerialize for ResetStream {
-    fn serialize_response(&self, _: Option<&mut hpack::Encoder>) -> Vec<u8> {
+    fn serialize_response(&self, _: Option<&mut fluke_hpack::Encoder>) -> Vec<u8> {
         (self.error_code as u32).to_be_bytes().to_vec()
     }
 
-    fn compute_frame_length(&self, _: Option<&mut hpack::Encoder>) -> u32 {
+    fn compute_frame_length(&self, _: Option<&mut fluke_hpack::Encoder>) -> u32 {
         mem::size_of::<u32>() as u32
     }
 }

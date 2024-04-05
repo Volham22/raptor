@@ -61,7 +61,7 @@ async fn main() -> io::Result<()> {
     let conf = match config::Config::from_yaml_str(&config_file_content).await {
         Ok(c) => Arc::new(c),
         Err(err) => {
-            error!("Error while loading configuration file: {}", err);
+            eprintln!("Error while loading configuration file: {}", err);
             std::process::exit(1);
         }
     };

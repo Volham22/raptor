@@ -7,7 +7,7 @@ pub fn build_frame_header<T: ResponseSerialize>(
     frame_type: frames::FrameType,
     stream_identifer: u32,
     frame: &T,
-    encoder: Option<&mut hpack::Encoder>,
+    encoder: Option<&mut fluke_hpack::Encoder>,
 ) {
     // Slice to 1.. because of network endianness
     let payload = frame.serialize_response(encoder);
@@ -21,8 +21,8 @@ pub fn build_frame_header<T: ResponseSerialize>(
 }
 
 pub trait ResponseSerialize {
-    fn serialize_response(&self, encoder: Option<&mut hpack::Encoder>) -> Vec<u8>;
-    fn compute_frame_length(&self, encoder: Option<&mut hpack::Encoder>) -> u32;
+    fn serialize_response(&self, encoder: Option<&mut fluke_hpack::Encoder>) -> Vec<u8>;
+    fn compute_frame_length(&self, encoder: Option<&mut fluke_hpack::Encoder>) -> u32;
     fn get_flags(&self) -> u8 {
         0
     }

@@ -107,7 +107,7 @@ impl Stream {
         max_frame_size: usize,
         global_window_size: &mut i64,
         config: &Arc<Config>,
-        encoder: &mut hpack::Encoder<'_>,
+        encoder: &mut fluke_hpack::Encoder<'_>,
     ) -> ConnectionResult<()> {
         let headers = self.request_headers.as_ref().unwrap();
 

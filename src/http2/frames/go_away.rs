@@ -136,7 +136,7 @@ impl GoAway {
 }
 
 impl ResponseSerialize for GoAway {
-    fn serialize_response(&self, _: Option<&mut hpack::Encoder>) -> Vec<u8> {
+    fn serialize_response(&self, _: Option<&mut fluke_hpack::Encoder>) -> Vec<u8> {
         let mut result = Vec::with_capacity(
             FRAME_HEADER_LENGTH + 2 * mem::size_of::<u32>() + self.additionnal_data.len(),
         );
@@ -148,7 +148,7 @@ impl ResponseSerialize for GoAway {
         result
     }
 
-    fn compute_frame_length(&self, _: Option<&mut hpack::Encoder>) -> u32 {
+    fn compute_frame_length(&self, _: Option<&mut fluke_hpack::Encoder>) -> u32 {
         (FRAME_HEADER_LENGTH + 2 * mem::size_of::<u32>() + self.additionnal_data.len()) as u32
     }
 }

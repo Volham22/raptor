@@ -119,7 +119,7 @@ impl Settings {
 }
 
 impl ResponseSerialize for Settings {
-    fn serialize_response(&self, _: Option<&mut hpack::Encoder>) -> Vec<u8> {
+    fn serialize_response(&self, _: Option<&mut fluke_hpack::Encoder>) -> Vec<u8> {
         let mut result = Vec::new();
         if self.is_ack {
             return result;
@@ -135,7 +135,7 @@ impl ResponseSerialize for Settings {
         result
     }
 
-    fn compute_frame_length(&self, _: Option<&mut hpack::Encoder>) -> u32 {
+    fn compute_frame_length(&self, _: Option<&mut fluke_hpack::Encoder>) -> u32 {
         (TUPLE_LENGTH * self.flags.len()) as u32
     }
 

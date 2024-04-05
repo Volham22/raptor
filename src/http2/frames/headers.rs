@@ -47,7 +47,7 @@ impl Headers {
 
     pub fn from_bytes(
         value: &[u8],
-        decoder: &mut hpack::Decoder,
+        decoder: &mut fluke_hpack::Decoder,
         flags: u8,
         length: usize,
     ) -> Result<Self, FrameError> {
@@ -119,13 +119,13 @@ impl HttpRequest for Headers {
 }
 
 impl ResponseSerialize for Headers {
-    fn serialize_response(&self, encoder: Option<&mut hpack::Encoder>) -> Vec<u8> {
+    fn serialize_response(&self, encoder: Option<&mut fluke_hpack::Encoder>) -> Vec<u8> {
         encoder
             .unwrap()
             .encode(self.headers.iter().map(|(k, v)| (&k[..], &v[..])))
     }
 
-    fn compute_frame_length(&self, encoder: Option<&mut hpack::Encoder>) -> u32 {
+    fn compute_frame_length(&self, encoder: Option<&mut fluke_hpack::Encoder>) -> u32 {
         encoder
             .unwrap()
             .encode(self.headers.iter().map(|(k, v)| (&k[..], &v[..])))
