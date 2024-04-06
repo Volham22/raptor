@@ -1,0 +1,23 @@
+[package]
+name = "raptor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytes = "1.4.0"
+chrono = "0.4.26"
+clap = { version = "4.5.4", features = ["derive"] }
+fluke-hpack = "0.3.0"
+httparse = "1.8.0"
+mime_guess = "2.0.4"
+rustls-pemfile = "1"
+serde = {version = "1.0.185", features = ["derive"]}
+serde_yaml = "0.9.25"
+thiserror = "1.0.44"
+tokio = { version = "1.29.1", features = ["rt", "net", "macros", "io-util", "fs", "rt-multi-thread"]}
+tokio-rustls = "0.24.1"
+tracing = "0.1"
+tracing-appender = "0.2.3"
+tracing-subscriber = "0.3"
