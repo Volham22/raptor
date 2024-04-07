@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tracing::trace;
+use tracing::{debug, trace};
 
-use crate::frames::errors::FrameResult;
+use crate::frames::{errors::FrameResult, headers::Headers};
 
 pub(crate) const MAX_CONCURRENT_STREAM: usize = 100;
 
@@ -19,6 +19,7 @@ enum StreamState {
 
 pub(crate) enum StreamFrame {
     PushPromise,
+    Header(Headers),
 }
 
 pub type StreamReceiver = Receiver<Arc<StreamFrame>>;
@@ -62,6 +63,9 @@ impl Stream {
             match frame.as_ref() {
                 StreamFrame::PushPromise => {
                     self.state = StreamState::ReservedRemote;
+                },
+                StreamFrame::Header(headers) => {
+                    debug!("Got frame headers: {headers:?}");
                 }
             }
         }

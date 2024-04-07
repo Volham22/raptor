@@ -350,6 +350,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluke-hpack"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "873551f574080ff015f5bf85e734114dc88cd26a4561a79b13aa5bcb7ae1b40a"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -504,6 +513,7 @@ dependencies = [
 name = "http2"
 version = "0.1.0"
 dependencies = [
+ "fluke-hpack",
  "rstest",
  "thiserror",
  "tokio",

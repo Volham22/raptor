@@ -7,7 +7,7 @@ use super::{
 
 const PRIORITY_FRAME_SIZE: usize = 5;
 
-pub(self) fn check_check_priority_frame(frame: &Frame) -> FrameResult<()> {
+fn check_check_priority_frame(frame: &Frame) -> FrameResult<()> {
     if frame.length != PRIORITY_FRAME_SIZE as u32 {
         return Err(FrameError::BadPriorityFrameSize(frame.length));
     }

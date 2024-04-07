@@ -22,6 +22,8 @@ pub(crate) enum FrameError {
     BadPriorityFrameSize(u32),
     #[error("Priority frame received on stream zero")]
     PriorityFrameStreamZero,
+    #[error("HPACK decode error")]
+    HpackDecodeError(fluke_hpack::decoder::DecoderError),
     #[error("IO error: {0:?}")]
     IOError(io::Error),
 }
