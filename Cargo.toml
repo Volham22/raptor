@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.dependencies]
 thiserror = "1.0.44"
 tokio-rustls = "=0.26.0"
-tokio = { version = "1.37.0", features = ["rt", "net", "macros", "io-util", "fs", "rt-multi-thread"] }
+tokio = { version = "1.37.0", features = ["rt", "net", "macros", "io-util", "fs", "rt-multi-thread", "sync"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tracing-appender = "0.2.3"

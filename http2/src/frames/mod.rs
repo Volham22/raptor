@@ -5,6 +5,7 @@ use self::errors::FrameError;
 pub(crate) const FRAME_HEADER_SIZE: usize = 9;
 
 pub(crate) mod errors;
+pub(crate) mod priority;
 mod settings;
 
 pub(crate) use settings::*;

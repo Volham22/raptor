@@ -38,7 +38,7 @@ pub(crate) type Setting = (SettingType, u32);
 
 #[derive(Debug)]
 pub(crate) struct Settings {
-    is_ack: bool,
+    pub is_ack: bool,
     settings: Vec<Setting>,
 }
 

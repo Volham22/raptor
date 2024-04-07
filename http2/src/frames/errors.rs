@@ -18,6 +18,10 @@ pub(crate) enum FrameError {
     SettingNotStreamZero,
     #[error("Bad settings length: {0}")]
     BadSettingsLength(u32),
+    #[error("Bad priority frame size: {0}")]
+    BadPriorityFrameSize(u32),
+    #[error("Priority frame received on stream zero")]
+    PriorityFrameStreamZero,
     #[error("IO error: {0:?}")]
     IOError(io::Error),
 }

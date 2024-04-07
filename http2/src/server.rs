@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, sync::Arc};
 
 use tokio::{io::AsyncReadExt, net::TcpStream};
 use tokio_rustls::server::TlsStream;
@@ -10,6 +10,7 @@ use crate::{
         errors::{FrameError, FrameResult},
         Frame, FrameType, FRAME_HEADER_SIZE,
     },
+    streams::{StreamFrame, StreamManager},
     utils::write_all_buffer,
 };
 
@@ -45,6 +46,8 @@ async fn receive_frame_header(stream: &mut ConnectionStream) -> FrameResult<Fram
 }
 
 async fn do_connection_loop(mut stream: ConnectionStream) -> FrameResult<()> {
+    let mut stream_manager = StreamManager::default();
+
     loop {
         let frame = receive_frame_header(&mut stream).await?;
         debug!("Frame header received: {frame:?}");
@@ -54,6 +57,20 @@ async fn do_connection_loop(mut stream: ConnectionStream) -> FrameResult<()> {
                 let setting_frame =
                     frames::Settings::receive_from_frame(&frame, &mut stream).await?;
                 debug!("Setting frame: {setting_frame:?}");
+
+                if setting_frame.is_ack {
+                    trace!("Setting acknowledged by the server");
+                }
+            }
+            FrameType::Priority => {
+                trace!("Received priority frame. Server does not support this feature. Skipping.");
+                frames::priority::receive_priority_frame(&mut stream, &frame).await?;
+            }
+            FrameType::PushPromise => {
+                stream_manager.register_new_stream_if_needed(frame.stream_id);
+                stream_manager
+                    .send_frame_to_stream(Arc::new(StreamFrame::PushPromise), frame.stream_id)
+                    .await;
             }
             _ => todo!(),
         }
