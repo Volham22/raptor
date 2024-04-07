@@ -1,8 +1,12 @@
 use std::io;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::debug;
 
-use crate::server::ConnectionStream;
+use crate::{
+    frames::{Frame, SerializeFrame},
+    server::ConnectionStream,
+};
 
 pub(crate) async fn receive_n_bytes(
     stream: &mut ConnectionStream,
@@ -29,4 +33,25 @@ pub(crate) async fn write_all_buffer(
     }
 
     Ok(())
+}
+
+pub(crate) async fn send_frame<T: SerializeFrame>(
+    stream: &mut ConnectionStream,
+    frame: &mut Frame,
+    payload: T,
+) -> io::Result<()> {
+    let mut bytes = Vec::new();
+    let mut payload_bytes = payload.serialize_frame(frame);
+    frame.length = payload_bytes.len() as u32;
+    debug!("Send frame header: {frame:?}");
+
+    bytes.extend_from_slice(&frame.length.to_be_bytes()[1..]);
+    bytes.extend_from_slice(&(frame.frame_type as u8).to_be_bytes());
+    bytes.extend_from_slice(&frame.flags.to_be_bytes());
+    bytes.extend_from_slice(&frame.stream_id.to_be_bytes());
+    bytes.append(&mut payload_bytes);
+    debug!("Frame: {bytes:#01x?}");
+
+    write_all_buffer(stream, &bytes).await
+    // Ok(())
 }

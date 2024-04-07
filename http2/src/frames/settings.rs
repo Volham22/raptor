@@ -4,11 +4,11 @@ use crate::{server::ConnectionStream, utils};
 
 use super::{
     errors::{FrameError, FrameResult},
-    Frame,
+    Frame, SerializeFrame,
 };
 
 #[repr(u16)]
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum SettingType {
     HeaderTableSize = 1,
     EnablePush = 2,
@@ -43,6 +43,23 @@ pub(crate) struct Settings {
 }
 
 impl Settings {
+    pub fn server_settings() -> Self {
+        Self {
+            is_ack: false,
+            settings: vec![
+                (SettingType::MaxConcurrentStreams, 100),
+                (SettingType::EnablePush, 0),
+            ],
+        }
+    }
+
+    pub fn setting_ack() -> Self {
+        Self {
+            is_ack: true,
+            settings: Vec::new(),
+        }
+    }
+
     pub async fn receive_from_frame(
         frame: &Frame,
         stream: &mut ConnectionStream,
@@ -89,10 +106,29 @@ impl Settings {
     }
 }
 
+impl SerializeFrame for Settings {
+    fn serialize_frame(&self, frame: &mut Frame) -> Vec<u8> {
+        let mut result = Vec::with_capacity(self.settings.len());
+
+        frame.flags = if self.is_ack { 0x01 } else { 0x00 };
+
+        for (name, value) in &self.settings {
+            result.extend((*name as u16).to_be_bytes());
+            result.extend(value.to_be_bytes());
+        }
+
+        debug_assert!(result.len() % 6 == 0);
+
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::frames::{
-        errors::FrameError, Frame, FrameType, SettingType, Settings, FRAME_HEADER_SIZE,
+        errors::FrameError,
+        settings::{SettingType, Settings},
+        Frame, FrameType, FRAME_HEADER_SIZE,
     };
 
     #[test]

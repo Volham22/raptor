@@ -11,6 +11,7 @@ tokio-rustls = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 fluke-hpack = "0.3.0"
+raptor_core = { path = "../raptor-core" }
 
 [dev-dependencies]
 rstest = "0.18.2"

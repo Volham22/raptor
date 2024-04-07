@@ -1,6 +1,7 @@
 use std::{fmt::Write, io, sync::Arc};
 
 use bytes::BytesMut;
+use raptor_core::{method_handlers::handle_request, config::Config, response::Response};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -8,7 +9,7 @@ use tokio::{
 use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, event, info, trace, Level};
 
-use crate::{config::Config, http11, method_handlers::handle_request, response::Response};
+use crate::{http11};
 
 async fn send_response(mut stream: TlsStream<TcpStream>, response: Response) -> io::Result<()> {
     const CRLF: &[u8; 2] = b"\r\n";

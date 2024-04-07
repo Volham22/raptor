@@ -9,7 +9,7 @@ pub(crate) mod headers;
 pub(crate) mod priority;
 pub(crate) mod settings;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum FrameType {
     Data = 0,
@@ -22,6 +22,12 @@ pub(crate) enum FrameType {
     GoAway = 7,
     WindowUpdate = 8,
     Continuation = 9,
+}
+
+impl Default for FrameType {
+    fn default() -> Self {
+        Self::Data
+    }
 }
 
 impl TryFrom<u8> for FrameType {
@@ -45,7 +51,7 @@ impl TryFrom<u8> for FrameType {
 }
 
 /// Represent a frame header
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub(crate) struct Frame {
     pub length: u32,
     pub frame_type: FrameType,
@@ -80,6 +86,10 @@ impl TryFrom<&[u8]> for Frame {
             stream_id,
         })
     }
+}
+
+pub trait SerializeFrame {
+    fn serialize_frame(&self, frame: &mut Frame) -> Vec<u8>;
 }
 
 #[cfg(test)]

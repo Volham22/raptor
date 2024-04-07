@@ -52,23 +52,22 @@ impl Stream {
 
     pub async fn do_stream_job(&mut self) -> FrameResult<()> {
         loop {
-            let frame = self
-                .rx
-                .as_mut()
-                .unwrap()
-                .recv()
-                .await
-                .expect("Failed to receive stream frame");
+            let Some(frame) = self.rx.as_mut().unwrap().recv().await else {
+                trace!("Failed to receive data from connection");
+                break;
+            };
 
             match frame.as_ref() {
                 StreamFrame::PushPromise => {
                     self.state = StreamState::ReservedRemote;
-                },
+                }
                 StreamFrame::Header(headers) => {
                     debug!("Got frame headers: {headers:?}");
                 }
             }
         }
+
+        Ok(())
     }
 }
 

@@ -12,14 +12,11 @@ use tokio_rustls::{
     TlsAcceptor,
 };
 use tracing::{debug, error, info, info_span, warn, Instrument};
+use raptor_core::config;
 
-mod config;
 mod connection;
 mod http11;
 mod logging;
-mod method_handlers;
-mod request;
-mod response;
 
 fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
     let mut cert_buffer = io::BufReader::new(File::open(path)?);

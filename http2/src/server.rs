@@ -11,7 +11,7 @@ use crate::{
         Frame, FrameType, FRAME_HEADER_SIZE,
     },
     streams::{StreamFrame, StreamManager},
-    utils::write_all_buffer,
+    utils::{self},
 };
 
 const CONNECTION_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -19,7 +19,6 @@ const CONNECTION_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 pub(crate) type ConnectionStream = TlsStream<TcpStream>;
 
 async fn handle_connection_preface(stream: &mut ConnectionStream) -> io::Result<bool> {
-    write_all_buffer(stream, CONNECTION_PREFACE).await?;
     let mut preface_buffer: [u8; 24] = [0; 24];
     let mut received_size = 0usize;
 
@@ -29,6 +28,29 @@ async fn handle_connection_preface(stream: &mut ConnectionStream) -> io::Result<
 
     debug!("Receiver prefaced from client: {preface_buffer:?}");
     Ok(preface_buffer == *CONNECTION_PREFACE)
+}
+
+async fn send_server_settings(stream: &mut ConnectionStream) -> io::Result<()> {
+    trace!("Send server settings");
+    let mut frame = frames::Frame {
+        length: 0,
+        stream_id: 0,
+        frame_type: frames::FrameType::Settings,
+        flags: 0,
+    };
+
+    let settings = frames::settings::Settings::server_settings();
+    utils::send_frame(stream, &mut frame, settings).await
+}
+
+async fn send_setting_ack(stream: &mut ConnectionStream) -> io::Result<()> {
+    let mut frame = frames::Frame {
+        frame_type: frames::FrameType::Settings,
+        ..Default::default()
+    };
+    let ack = frames::settings::Settings::setting_ack();
+
+    utils::send_frame(stream, &mut frame, ack).await
 }
 
 async fn receive_frame_header(stream: &mut ConnectionStream) -> FrameResult<Frame> {
@@ -59,8 +81,13 @@ async fn do_connection_loop(mut stream: ConnectionStream) -> FrameResult<()> {
                     frames::settings::Settings::receive_from_frame(&frame, &mut stream).await?;
                 debug!("Setting frame: {setting_frame:?}");
 
-                if setting_frame.is_ack {
-                    trace!("Setting acknowledged by the server");
+                if !setting_frame.is_ack {
+                    // TODO: Handle settings
+                    send_setting_ack(&mut stream)
+                        .await
+                        .map_err(FrameError::IOError)?;
+                } else {
+                    trace!("Setting acknowledged by the client");
                 }
             }
             FrameType::Priority => {
@@ -104,6 +131,8 @@ pub async fn run_connection(mut stream: ConnectionStream) -> io::Result<()> {
     }
 
     trace!("Received connection preface. Starting connection handling");
+    send_server_settings(&mut stream).await?;
+
     match do_connection_loop(stream).await {
         Ok(()) => Ok(()),
         Err(FrameError::IOError(e)) => Err(e),
