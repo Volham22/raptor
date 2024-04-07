@@ -9,15 +9,15 @@ edition = "2021"
 bytes = "1.4.0"
 chrono = "0.4.26"
 clap = { version = "4.5.4", features = ["derive"] }
-fluke-hpack = "0.3.0"
 httparse = "1.8.0"
+http2 = { path = "../http2" }
 mime_guess = "2.0.4"
-rustls-pemfile = "1"
+rustls-pemfile = "2"
 serde = {version = "1.0.185", features = ["derive"]}
 serde_yaml = "0.9.25"
-thiserror = "1.0.44"
-tokio = { version = "1.29.1", features = ["rt", "net", "macros", "io-util", "fs", "rt-multi-thread"]}
-tokio-rustls = "0.24.1"
-tracing = "0.1"
-tracing-appender = "0.2.3"
-tracing-subscriber = "0.3"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
