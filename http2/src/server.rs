@@ -1,6 +1,7 @@
 use std::{io, sync::Arc};
 
-use tokio::{io::AsyncReadExt, net::TcpStream};
+use raptor_core::config;
+use tokio::{io::AsyncReadExt, net::TcpStream, select};
 use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, instrument, trace};
 
@@ -40,7 +41,7 @@ async fn send_server_settings(stream: &mut ConnectionStream) -> io::Result<()> {
     };
 
     let settings = frames::settings::Settings::server_settings();
-    utils::send_frame(stream, &mut frame, settings).await
+    utils::send_frame(stream, &mut frame, None, settings).await
 }
 
 async fn send_setting_ack(stream: &mut ConnectionStream) -> io::Result<()> {
@@ -50,7 +51,7 @@ async fn send_setting_ack(stream: &mut ConnectionStream) -> io::Result<()> {
     };
     let ack = frames::settings::Settings::setting_ack();
 
-    utils::send_frame(stream, &mut frame, ack).await
+    utils::send_frame(stream, &mut frame, None, ack).await
 }
 
 async fn receive_frame_header(stream: &mut ConnectionStream) -> FrameResult<Frame> {
@@ -67,64 +68,113 @@ async fn receive_frame_header(stream: &mut ConnectionStream) -> FrameResult<Fram
     Frame::try_from(frame_header_buffer.as_slice())
 }
 
-async fn do_connection_loop(mut stream: ConnectionStream) -> FrameResult<()> {
+async fn handle_frame(
+    conf: &Arc<config::Config>,
+    frame: &Frame,
+    stream: &mut ConnectionStream,
+    stream_manager: &mut StreamManager,
+    hpack_decoder: &mut fluke_hpack::Decoder<'_>,
+) -> FrameResult<()> {
+    match frame.frame_type {
+        FrameType::Settings => {
+            let setting_frame =
+                frames::settings::Settings::receive_from_frame(frame, stream).await?;
+            debug!("Setting frame: {setting_frame:?}");
+
+            if !setting_frame.is_ack {
+                // TODO: Handle settings
+                send_setting_ack(stream).await.map_err(FrameError::IOError)
+            } else {
+                trace!("Setting acknowledged by the client");
+                Ok(())
+            }
+        }
+        FrameType::Priority => {
+            trace!("Received priority frame. Server does not support this feature. Skipping.");
+            frames::priority::receive_priority_frame(stream, frame).await
+        }
+        FrameType::PushPromise => {
+            stream_manager.register_new_stream_if_needed(frame.stream_id, conf.clone());
+            stream_manager
+                .send_frame_to_stream(Arc::new(StreamFrame::PushPromise), frame.stream_id)
+                .await;
+
+            Ok(())
+        }
+        FrameType::Header => {
+            stream_manager.register_new_stream_if_needed(frame.stream_id, conf.clone());
+            let headers_frame =
+                frames::headers::Headers::receive_header_frame(stream, frame, hpack_decoder)
+                    .await?;
+
+            stream_manager
+                .send_frame_to_stream(
+                    Arc::new(StreamFrame::Header(headers_frame)),
+                    frame.stream_id,
+                )
+                .await;
+            Ok(())
+        }
+        _ => todo!(),
+    }
+}
+
+async fn do_connection_loop(
+    mut stream: ConnectionStream,
+    conf: &Arc<config::Config>,
+) -> FrameResult<()> {
     let mut stream_manager = StreamManager::default();
     let mut hpack_decoder = fluke_hpack::Decoder::new();
 
     loop {
-        let frame = receive_frame_header(&mut stream).await?;
-        debug!("Frame header received: {frame:?}");
+        // If we don't have stream opened, don't call select has the stream_manager will
+        // immediately return `None` and thus consume too much CPU
+        if stream_manager.is_empty() {
+            let frame = receive_frame_header(&mut stream).await?;
+            handle_frame(
+                conf,
+                &frame,
+                &mut stream,
+                &mut stream_manager,
+                &mut hpack_decoder,
+            )
+            .await?;
 
-        match frame.frame_type {
-            FrameType::Settings => {
-                let setting_frame =
-                    frames::settings::Settings::receive_from_frame(&frame, &mut stream).await?;
-                debug!("Setting frame: {setting_frame:?}");
+            continue;
+        }
 
-                if !setting_frame.is_ack {
-                    // TODO: Handle settings
-                    send_setting_ack(&mut stream)
-                        .await
-                        .map_err(FrameError::IOError)?;
-                } else {
-                    trace!("Setting acknowledged by the client");
-                }
-            }
-            FrameType::Priority => {
-                trace!("Received priority frame. Server does not support this feature. Skipping.");
-                frames::priority::receive_priority_frame(&mut stream, &frame).await?;
-            }
-            FrameType::PushPromise => {
-                stream_manager.register_new_stream_if_needed(frame.stream_id);
-                stream_manager
-                    .send_frame_to_stream(Arc::new(StreamFrame::PushPromise), frame.stream_id)
-                    .await;
-            }
-            FrameType::Header => {
-                stream_manager.register_new_stream_if_needed(frame.stream_id);
-                let headers_frame = frames::headers::Headers::receive_header_frame(
-                    &mut stream,
+        // A connection thread can receive two kind of things:
+        // 1. Some data to send from a stream
+        // 2. A new frame to handle
+        select! {
+            data = stream_manager.poll_data() => debug!("{data:?}"),
+            frame = receive_frame_header(&mut stream) => {
+                let Ok(frame) = frame else {
+                    return Err(frame.unwrap_err());
+                };
+
+                handle_frame(
+                    conf,
                     &frame,
+                    &mut stream,
+                    &mut stream_manager,
                     &mut hpack_decoder,
                 )
                 .await?;
 
-                stream_manager
-                    .send_frame_to_stream(
-                        Arc::new(StreamFrame::Header(headers_frame)),
-                        frame.stream_id,
-                    )
-                    .await;
-            }
-            _ => todo!(),
-        }
+                debug!("Frame header received: {frame:?}");
+            },
+        };
     }
 }
 
 /// Run an HTTP/2 client connection. At this point the connection has already
 /// been accepted and http/2 has been negociated with the TLS ALPN extension
 #[instrument]
-pub async fn run_connection(mut stream: ConnectionStream) -> io::Result<()> {
+pub async fn run_connection(
+    mut stream: ConnectionStream,
+    config: Arc<config::Config>,
+) -> io::Result<()> {
     if !handle_connection_preface(&mut stream).await? {
         error!("Invalid connection preface received");
         return Ok(());
@@ -133,7 +183,7 @@ pub async fn run_connection(mut stream: ConnectionStream) -> io::Result<()> {
     trace!("Received connection preface. Starting connection handling");
     send_server_settings(&mut stream).await?;
 
-    match do_connection_loop(stream).await {
+    match do_connection_loop(stream, &config).await {
         Ok(()) => Ok(()),
         Err(FrameError::IOError(e)) => Err(e),
         Err(e) => {

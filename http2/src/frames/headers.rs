@@ -1,8 +1,11 @@
+use raptor_core::request::{self, HttpRequest};
+use tracing::warn;
+
 use crate::{server::ConnectionStream, utils};
 
 use super::{
     errors::{FrameError, FrameResult},
-    Frame,
+    Frame, SerializeFrame,
 };
 
 #[derive(Debug)]
@@ -33,12 +36,16 @@ impl Headers {
             todo!("Padding isn't supported yet");
         }
 
-        if frame.flags & (0x01 << 6) > 0 {
-            todo!("Priority is not supported yet");
+        // TODO: Support priority
+        let has_priority = frame.flags & 0x20 > 0;
+        if has_priority {
+            warn!("Priority is not supported yet. Ignoring");
         }
 
+        let payload_offset = if has_priority { 5usize } else { 0 };
+
         let headers = hpack_decoder
-            .decode(frame_bytes)
+            .decode(&frame_bytes[payload_offset..frame.length as usize])
             .map_err(FrameError::HpackDecodeError)?;
 
         Ok(Self {
@@ -55,6 +62,55 @@ impl Headers {
     #[inline]
     pub fn has_end_headers(&self) -> bool {
         self.flags & (0x01 << 2) > 0
+    }
+}
+
+impl HttpRequest for Headers {
+    fn get_type(&self) -> Result<request::RequestType, request::RequestError> {
+        let method = self
+            .headers
+            .iter()
+            .find(|(k, _)| k == b":method")
+            .ok_or(request::RequestError::MalformedRequest)?;
+
+        Ok(match method.1.as_slice() {
+            b"GET" => request::RequestType::Get,
+            b"PUT" => request::RequestType::Put,
+            b"HEAD" => request::RequestType::Head,
+            b"DELETE" => request::RequestType::Delete,
+            _ => Err(request::RequestError::MalformedRequest)?,
+        })
+    }
+
+    fn get_uri(&self) -> Result<&[u8], request::RequestError> {
+        let (_, value) = self
+            .headers
+            .iter()
+            .find(|(k, _)| k == b":path")
+            .ok_or(request::RequestError::MalformedRequest)?;
+
+        Ok(value)
+    }
+}
+
+impl SerializeFrame for Headers {
+    fn serialize_frame(
+        &self,
+        frame: &mut Frame,
+        encoder: Option<&mut fluke_hpack::Encoder>,
+    ) -> Vec<u8> {
+        assert!(encoder.is_some());
+        let encoder = encoder.unwrap();
+        let encoded_bytes = encoder.encode(
+            self.headers
+                .iter()
+                .map(|(k, v)| (k.as_slice(), v.as_slice()))
+                .collect::<Vec<(&[u8], &[u8])>>(),
+        );
+        frame.flags = self.flags;
+        frame.length = encoded_bytes.len() as u32;
+
+        encoded_bytes
     }
 }
 

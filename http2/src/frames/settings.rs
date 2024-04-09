@@ -107,7 +107,11 @@ impl Settings {
 }
 
 impl SerializeFrame for Settings {
-    fn serialize_frame(&self, frame: &mut Frame) -> Vec<u8> {
+    fn serialize_frame(
+        &self,
+        frame: &mut Frame,
+        encoder: Option<&mut fluke_hpack::Encoder>,
+    ) -> Vec<u8> {
         let mut result = Vec::with_capacity(self.settings.len());
 
         frame.flags = if self.is_ack { 0x01 } else { 0x00 };

@@ -18,7 +18,7 @@ pub async fn do_connection(
     match conn.alpn_protocol() {
         Some(b"h2") => {
             debug!("Using 'h2' protocol");
-            http2::run_connection(stream).await
+            http2::run_connection(stream, config.clone()).await
         }
         Some(b"http/1.1") => {
             debug!("Using 'http/1.1' protocol");

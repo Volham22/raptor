@@ -38,19 +38,19 @@ pub(crate) async fn write_all_buffer(
 pub(crate) async fn send_frame<T: SerializeFrame>(
     stream: &mut ConnectionStream,
     frame: &mut Frame,
+    encoder: Option<&mut fluke_hpack::Encoder<'_>>,
     payload: T,
 ) -> io::Result<()> {
     let mut bytes = Vec::new();
-    let mut payload_bytes = payload.serialize_frame(frame);
+    let mut payload_bytes = payload.serialize_frame(frame, encoder);
     frame.length = payload_bytes.len() as u32;
-    debug!("Send frame header: {frame:?}");
 
     bytes.extend_from_slice(&frame.length.to_be_bytes()[1..]);
     bytes.extend_from_slice(&(frame.frame_type as u8).to_be_bytes());
     bytes.extend_from_slice(&frame.flags.to_be_bytes());
     bytes.extend_from_slice(&frame.stream_id.to_be_bytes());
     bytes.append(&mut payload_bytes);
-    debug!("Frame: {bytes:#01x?}");
+    debug!("Send frame: {bytes:#01x?}");
 
     write_all_buffer(stream, &bytes).await
     // Ok(())

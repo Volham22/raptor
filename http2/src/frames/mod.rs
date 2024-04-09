@@ -4,6 +4,7 @@ use self::errors::FrameError;
 /// All frames begin with a fixed 9-octet header followed by a variable-length frame payload.
 pub(crate) const FRAME_HEADER_SIZE: usize = 9;
 
+pub(crate) mod data;
 pub(crate) mod errors;
 pub(crate) mod headers;
 pub(crate) mod priority;
@@ -89,7 +90,11 @@ impl TryFrom<&[u8]> for Frame {
 }
 
 pub trait SerializeFrame {
-    fn serialize_frame(&self, frame: &mut Frame) -> Vec<u8>;
+    fn serialize_frame(
+        &self,
+        frame: &mut Frame,
+        encoder: Option<&mut fluke_hpack::Encoder>,
+    ) -> Vec<u8>;
 }
 
 #[cfg(test)]
