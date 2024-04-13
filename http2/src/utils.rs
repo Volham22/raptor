@@ -4,7 +4,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
 };
-use tracing::{debug, trace};
 
 use crate::{
     frames::{Frame, SerializeFrame, FRAME_HEADER_SIZE},
@@ -35,7 +34,6 @@ pub(crate) async fn write_all_buffer(
         sent_size += stream.write(buffer).await?;
     }
 
-    trace!("Send done");
     Ok(())
 }
 
@@ -71,8 +69,6 @@ pub(crate) async fn send_frame<T: SerializeFrame>(
     bytes.extend_from_slice(&frame.flags.to_be_bytes());
     bytes.extend_from_slice(&frame.stream_id.to_be_bytes());
     bytes.append(&mut payload_bytes);
-    debug!("Send frame: {bytes:#01x?}");
 
     write_all_buffer(stream, &bytes).await
-    // Ok(())
 }

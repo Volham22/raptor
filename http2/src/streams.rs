@@ -20,7 +20,7 @@ use crate::{
         errors::FrameResult,
         headers::Headers,
         window_update::{WindowUpdate, DEFAULT_WINDOW_SIZE},
-        Frame, FrameType, SerializeFrame,
+        Frame, FrameType,
     },
     utils,
 };
@@ -28,6 +28,7 @@ use crate::{
 pub(crate) const MAX_CONCURRENT_STREAM: usize = 100;
 
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 enum StreamState {
     Idle,
     ReservedLocal,
@@ -41,6 +42,7 @@ pub(crate) enum StreamFrame {
     PushPromise,
     Header(Headers),
     WindowUpdate(WindowUpdate),
+    SetWindow(i64),
 }
 
 pub type StreamReceiver = Receiver<Arc<StreamFrame>>;
@@ -49,7 +51,7 @@ pub type StreamSender = Sender<Arc<Vec<u8>>>;
 pub struct Stream {
     pub id: u32,
     state: StreamState,
-    flow_control: u32,
+    flow_control: i64,
     global_flow_control: Arc<AtomicU32>,
     encoder: Arc<Mutex<fluke_hpack::Encoder<'static>>>,
     conf: Arc<config::Config>,
@@ -62,7 +64,7 @@ impl Stream {
     pub fn new(
         id: u32,
         conf: Arc<config::Config>,
-        flow_control: u32,
+        flow_control: i64,
         global_flow_control: Arc<AtomicU32>,
         encoder: Arc<Mutex<fluke_hpack::Encoder<'static>>>,
     ) -> Self {
@@ -149,7 +151,7 @@ impl Stream {
                     self.send_data_within_control_flow().await
                 }
                 StreamFrame::WindowUpdate(window_update) => {
-                    self.flow_control += window_update.size_increment;
+                    self.flow_control += window_update.size_increment as i64;
                     debug!(
                         "Stream: {} has a flow control window of {} bytes",
                         self.id, self.flow_control
@@ -160,6 +162,10 @@ impl Stream {
                     }
                 }
                 StreamFrame::Header(_) => todo!("Continuation frame"),
+                StreamFrame::SetWindow(new_value) => {
+                    debug!("Stream: {} local_flow_control: {new_value}", self.id);
+                    self.flow_control = *new_value;
+                }
             }
         }
 
@@ -180,25 +186,34 @@ impl Stream {
         };
 
         for chunk in to_send.chunks(cmp::min(
-            self.flow_control,
+            self.flow_control as u32,
             self.global_flow_control.load(Ordering::Relaxed),
         ) as usize)
         {
-            if chunk.len() > self.flow_control as usize
-                || chunk.len() > self.global_flow_control.load(Ordering::Relaxed) as usize
+            debug!(
+                "Local flow control: {} global flow control: {}",
+                self.flow_control,
+                self.global_flow_control.load(Ordering::Relaxed)
+            );
+
+            if self.flow_control - (chunk.len() as i64) < 0
+                || (self.global_flow_control.load(Ordering::Relaxed) as i64) - (chunk.len() as i64)
+                    < 0
             {
                 debug!("Can't send more data. Pausing frame sending.");
                 break;
             }
 
+            *sent += chunk.len();
             let data = frames::data::Data {
-                flags: 0x01,
+                // End stream if there no data left to send
+                flags: if *sent < body.len() { 0x00 } else { 0x01 },
                 // TODO: Fix copy
                 data: chunk.to_vec(),
             };
 
             trace!("Send chunk of data of size {}", chunk.len());
-            self.flow_control -= chunk.len() as u32;
+            self.flow_control -= chunk.len() as i64;
             self.global_flow_control
                 .fetch_sub(chunk.len() as u32, Ordering::Relaxed);
 
@@ -222,6 +237,7 @@ pub struct StreamManager {
     streams: HashMap<u32, Sender<Arc<StreamFrame>>>,
     stream_data_receiver: Receiver<Arc<Vec<u8>>>,
     stream_data_sender: Sender<Arc<Vec<u8>>>,
+    initial_stream_window_size: i64,
 }
 
 impl Default for StreamManager {
@@ -232,6 +248,7 @@ impl Default for StreamManager {
             streams: HashMap::with_capacity(MAX_CONCURRENT_STREAM),
             stream_data_receiver: rx,
             stream_data_sender: tx,
+            initial_stream_window_size: DEFAULT_WINDOW_SIZE as i64,
         }
     }
 }
@@ -253,7 +270,7 @@ impl StreamManager {
         let mut stream = Stream::new(
             id,
             conf,
-            DEFAULT_WINDOW_SIZE,
+            self.initial_stream_window_size,
             global_flow_control,
             encoder.clone(),
         );
@@ -262,6 +279,19 @@ impl StreamManager {
         self.streams.insert(id, tx);
 
         tokio::spawn(async move { stream.do_stream_job().await });
+    }
+
+    pub fn set_initial_window_size(&mut self, new_size: u32) {
+        self.initial_stream_window_size = new_size as i64;
+    }
+
+    pub async fn broadcast_streams(&self, stream_frame: Arc<StreamFrame>) {
+        for sender in self.streams.values() {
+            sender
+                .send(stream_frame.clone())
+                .await
+                .expect("Failed to send initial window update to stream");
+        }
     }
 
     pub async fn poll_data(&mut self) -> Option<Arc<Vec<u8>>> {

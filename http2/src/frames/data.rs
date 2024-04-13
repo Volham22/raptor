@@ -1,24 +1,10 @@
 use raptor_core::response;
 
-use super::{errors::FrameResult, SerializeFrame};
+use super::SerializeFrame;
 
 pub(crate) struct Data {
     pub flags: u8,
     pub data: Vec<u8>,
-}
-
-impl Data {
-    // pub fn set_end_stream(&mut self, end_stream: bool) {
-    //     if end_stream {
-    //         self.flags |= 0x01;
-    //     } else {
-    //         self.flags &= !0x01;
-    //     }
-    // }
-
-    pub fn from_bytes(_bytes: &[u8]) -> FrameResult<Self> {
-        todo!("Parse data frame");
-    }
 }
 
 impl From<response::Response> for Data {
