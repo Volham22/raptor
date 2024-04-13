@@ -1,7 +1,10 @@
-use std::{io, sync::Arc};
+use std::{
+    io,
+    sync::{atomic::{AtomicU32, Ordering}, Arc},
+};
 
 use raptor_core::config;
-use tokio::{io::AsyncReadExt, net::TcpStream, select};
+use tokio::{io::AsyncReadExt, net::TcpStream, select, sync::Mutex};
 use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, instrument, trace};
 
@@ -9,10 +12,11 @@ use crate::{
     frames::{
         self,
         errors::{FrameError, FrameResult},
+        window_update::DEFAULT_WINDOW_SIZE,
         Frame, FrameType, FRAME_HEADER_SIZE,
     },
     streams::{StreamFrame, StreamManager},
-    utils::{self},
+    utils,
 };
 
 const CONNECTION_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -68,12 +72,14 @@ async fn receive_frame_header(stream: &mut ConnectionStream) -> FrameResult<Fram
     Frame::try_from(frame_header_buffer.as_slice())
 }
 
-async fn handle_frame(
+async fn handle_frame<'hpack>(
     conf: &Arc<config::Config>,
     frame: &Frame,
+    global_control_flow: Arc<AtomicU32>,
     stream: &mut ConnectionStream,
     stream_manager: &mut StreamManager,
     hpack_decoder: &mut fluke_hpack::Decoder<'_>,
+    hpack_encoder: Arc<Mutex<fluke_hpack::Encoder<'static>>>,
 ) -> FrameResult<()> {
     match frame.frame_type {
         FrameType::Settings => {
@@ -94,7 +100,12 @@ async fn handle_frame(
             frames::priority::receive_priority_frame(stream, frame).await
         }
         FrameType::PushPromise => {
-            stream_manager.register_new_stream_if_needed(frame.stream_id, conf.clone());
+            stream_manager.register_new_stream_if_needed(
+                frame.stream_id,
+                conf.clone(),
+                hpack_encoder.clone(),
+                global_control_flow.clone(),
+            );
             stream_manager
                 .send_frame_to_stream(Arc::new(StreamFrame::PushPromise), frame.stream_id)
                 .await;
@@ -102,7 +113,12 @@ async fn handle_frame(
             Ok(())
         }
         FrameType::Header => {
-            stream_manager.register_new_stream_if_needed(frame.stream_id, conf.clone());
+            stream_manager.register_new_stream_if_needed(
+                frame.stream_id,
+                conf.clone(),
+                hpack_encoder.clone(),
+                global_control_flow.clone(),
+            );
             let headers_frame =
                 frames::headers::Headers::receive_header_frame(stream, frame, hpack_decoder)
                     .await?;
@@ -115,39 +131,55 @@ async fn handle_frame(
                 .await;
             Ok(())
         }
+        FrameType::WindowUpdate => {
+            let window_update =
+                frames::window_update::WindowUpdate::receive_window_update(stream, frame).await?;
+
+            // This is stream specific. Let's notify the concerned stream
+            if window_update.stream != 0 {
+                stream_manager
+                    .send_frame_to_stream(
+                        Arc::new(StreamFrame::WindowUpdate(window_update)),
+                        frame.stream_id,
+                    )
+                    .await;
+            } else {
+                global_control_flow.fetch_add(window_update.size_increment, Ordering::Relaxed);
+            }
+
+            Ok(())
+        }
         _ => todo!(),
     }
 }
 
+#[instrument]
 async fn do_connection_loop(
     mut stream: ConnectionStream,
     conf: &Arc<config::Config>,
 ) -> FrameResult<()> {
     let mut stream_manager = StreamManager::default();
     let mut hpack_decoder = fluke_hpack::Decoder::new();
+    let hpack_encoder = fluke_hpack::Encoder::new();
+    let hpack_encoder = Arc::new(Mutex::new(hpack_encoder));
+    let global_flow_control = Arc::new(AtomicU32::new(DEFAULT_WINDOW_SIZE));
 
     loop {
-        // If we don't have stream opened, don't call select has the stream_manager will
-        // immediately return `None` and thus consume too much CPU
-        if stream_manager.is_empty() {
-            let frame = receive_frame_header(&mut stream).await?;
-            handle_frame(
-                conf,
-                &frame,
-                &mut stream,
-                &mut stream_manager,
-                &mut hpack_decoder,
-            )
-            .await?;
-
-            continue;
-        }
-
         // A connection thread can receive two kind of things:
         // 1. Some data to send from a stream
         // 2. A new frame to handle
         select! {
-            data = stream_manager.poll_data() => debug!("{data:?}"),
+            data = stream_manager.poll_data() => {
+                let Some(payload_bytes) = data.as_ref() else {
+                    error!("Failed to retrieve data to send from stream!");
+                    break Ok(());
+                };
+
+                trace!("Received data from stream. Sending");
+                utils::write_all_buffer(&mut stream, payload_bytes)
+                    .await
+                    .map_err(FrameError::IOError)?;
+            },
             frame = receive_frame_header(&mut stream) => {
                 let Ok(frame) = frame else {
                     return Err(frame.unwrap_err());
@@ -156,9 +188,11 @@ async fn do_connection_loop(
                 handle_frame(
                     conf,
                     &frame,
+                    global_flow_control.clone(),
                     &mut stream,
                     &mut stream_manager,
                     &mut hpack_decoder,
+                    hpack_encoder.clone(),
                 )
                 .await?;
 

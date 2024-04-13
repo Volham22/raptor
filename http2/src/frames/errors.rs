@@ -24,6 +24,10 @@ pub(crate) enum FrameError {
     PriorityFrameStreamZero,
     #[error("HPACK decode error")]
     HpackDecodeError(fluke_hpack::decoder::DecoderError),
+    #[error("Bad length for window update: {0}")]
+    BadLengthWindowUpdate(u32),
+    #[error("Max window update value: {0}")]
+    WindowUpdateTooBig(u32),
     #[error("IO error: {0:?}")]
     IOError(io::Error),
 }

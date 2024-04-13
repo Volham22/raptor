@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use tokio::sync::Mutex;
 use tracing::debug;
 
 use crate::{server::ConnectionStream, utils};
@@ -107,10 +110,10 @@ impl Settings {
 }
 
 impl SerializeFrame for Settings {
-    fn serialize_frame(
-        &self,
+    async fn serialize_frame(
+        self,
         frame: &mut Frame,
-        encoder: Option<&mut fluke_hpack::Encoder>,
+        _encoder: Option<Arc<Mutex<fluke_hpack::Encoder<'_>>>>,
     ) -> Vec<u8> {
         let mut result = Vec::with_capacity(self.settings.len());
 

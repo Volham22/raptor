@@ -1,10 +1,13 @@
-use std::io;
+use std::{io, sync::Arc};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::debug;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::Mutex,
+};
+use tracing::{debug, trace};
 
 use crate::{
-    frames::{Frame, SerializeFrame},
+    frames::{Frame, SerializeFrame, FRAME_HEADER_SIZE},
     server::ConnectionStream,
 };
 
@@ -32,17 +35,35 @@ pub(crate) async fn write_all_buffer(
         sent_size += stream.write(buffer).await?;
     }
 
+    trace!("Send done");
     Ok(())
+}
+
+pub(crate) async fn frame_to_bytes<T: SerializeFrame>(
+    frame: &mut Frame,
+    payload: T,
+    encoder: Option<Arc<Mutex<fluke_hpack::Encoder<'_>>>>,
+) -> Vec<u8> {
+    let mut payload_bytes = payload.serialize_frame(frame, encoder).await;
+    let mut result = Vec::with_capacity(FRAME_HEADER_SIZE + payload_bytes.len());
+
+    result.extend_from_slice(&frame.length.to_be_bytes()[1..]);
+    result.extend_from_slice(&(frame.frame_type as u8).to_be_bytes());
+    result.extend_from_slice(&frame.flags.to_be_bytes());
+    result.extend_from_slice(&frame.stream_id.to_be_bytes());
+    result.append(&mut payload_bytes);
+
+    result
 }
 
 pub(crate) async fn send_frame<T: SerializeFrame>(
     stream: &mut ConnectionStream,
     frame: &mut Frame,
-    encoder: Option<&mut fluke_hpack::Encoder<'_>>,
+    encoder: Option<Arc<Mutex<fluke_hpack::Encoder<'_>>>>,
     payload: T,
 ) -> io::Result<()> {
     let mut bytes = Vec::new();
-    let mut payload_bytes = payload.serialize_frame(frame, encoder);
+    let mut payload_bytes = payload.serialize_frame(frame, encoder).await;
     frame.length = payload_bytes.len() as u32;
 
     bytes.extend_from_slice(&frame.length.to_be_bytes()[1..]);

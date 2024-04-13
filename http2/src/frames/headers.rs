@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use raptor_core::request::{self, HttpRequest};
+use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::{server::ConnectionStream, utils};
@@ -8,13 +11,19 @@ use super::{
     Frame, SerializeFrame,
 };
 
+pub(crate) type Header = (Vec<u8>, Vec<u8>);
+
 #[derive(Debug)]
 pub(crate) struct Headers {
     flags: u8,
-    pub headers: Vec<(Vec<u8>, Vec<u8>)>,
+    pub headers: Vec<Header>,
 }
 
 impl Headers {
+    pub fn new(flags: u8, headers: Vec<Header>) -> Self {
+        Self { flags, headers }
+    }
+
     pub async fn receive_header_frame(
         stream: &mut ConnectionStream,
         frame: &Frame,
@@ -55,13 +64,14 @@ impl Headers {
     }
 
     #[inline]
+    #[cfg(test)]
     pub fn has_end_stream(&self) -> bool {
         self.flags & 0x01 > 0
     }
 
     #[inline]
     pub fn has_end_headers(&self) -> bool {
-        self.flags & (0x01 << 2) > 0
+        self.flags & 0x04 > 0
     }
 }
 
@@ -94,13 +104,17 @@ impl HttpRequest for Headers {
 }
 
 impl SerializeFrame for Headers {
-    fn serialize_frame(
-        &self,
+    async fn serialize_frame(
+        self,
         frame: &mut Frame,
-        encoder: Option<&mut fluke_hpack::Encoder>,
+        encoder: Option<Arc<Mutex<fluke_hpack::Encoder<'_>>>>,
     ) -> Vec<u8> {
-        assert!(encoder.is_some());
-        let encoder = encoder.unwrap();
+        let encoder_header = encoder.expect("must be provided for header");
+        let mut encoder = encoder_header.lock().await;
+
+        // Update frame
+        frame.flags = self.flags;
+
         let encoded_bytes = encoder.encode(
             self.headers
                 .iter()
@@ -180,7 +194,7 @@ mod tests {
     fn parse_correct_header_request() {
         const HEADER_BYTES: &[u8; 49] = include_bytes!("../../tests/data/header_frame2.raw");
         const FRAME: Frame = Frame {
-            length: 49,
+            length: 40,
             frame_type: FrameType::Header,
             flags: 0x05,
             stream_id: 1,

@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use tokio::sync::Mutex;
+
 use self::errors::FrameError;
 
 /// 4.1 Frame format
@@ -9,6 +13,7 @@ pub(crate) mod errors;
 pub(crate) mod headers;
 pub(crate) mod priority;
 pub(crate) mod settings;
+pub(crate) mod window_update;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -90,10 +95,10 @@ impl TryFrom<&[u8]> for Frame {
 }
 
 pub trait SerializeFrame {
-    fn serialize_frame(
-        &self,
+    async fn serialize_frame(
+        self,
         frame: &mut Frame,
-        encoder: Option<&mut fluke_hpack::Encoder>,
+        encoder: Option<Arc<Mutex<fluke_hpack::Encoder<'_>>>>,
     ) -> Vec<u8>;
 }
 
