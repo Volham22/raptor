@@ -33,7 +33,7 @@ struct ConnectionData {
     pub initial_window_size: i64,
     pub stream_manager: StreamManager,
     pub hpack_encoder: Arc<Mutex<fluke_hpack::Encoder<'static>>>,
-    pub hpack_decoder: fluke_hpack::Decoder<'static>,
+    pub hpack_decoder: Arc<Mutex<fluke_hpack::Decoder<'static>>>,
 }
 
 impl ConnectionData {
@@ -44,15 +44,10 @@ impl ConnectionData {
 }
 
 async fn handle_connection_preface(stream: &mut ConnectionStream) -> io::Result<bool> {
-    let mut preface_buffer: [u8; 24] = [0; 24];
-    let mut received_size = 0usize;
-
-    while received_size < CONNECTION_PREFACE.len() {
-        received_size += stream.read(&mut preface_buffer).await?;
-    }
+    let preface_buffer = utils::receive_n_bytes(stream, CONNECTION_PREFACE.len()).await?;
 
     debug!("Receiver prefaced from client: {preface_buffer:?}");
-    Ok(preface_buffer == *CONNECTION_PREFACE)
+    Ok(preface_buffer == CONNECTION_PREFACE)
 }
 
 async fn send_server_settings(stream: &mut ConnectionStream) -> io::Result<()> {
@@ -92,7 +87,7 @@ async fn receive_frame_header(stream: &mut ConnectionStream) -> FrameResult<Fram
     Frame::try_from(frame_header_buffer.as_slice())
 }
 
-async fn handle_frame<'hpack>(
+async fn handle_frame(
     conf: &Arc<config::Config>,
     frame: &Frame,
     connection_data: &mut ConnectionData,
@@ -109,18 +104,21 @@ async fn handle_frame<'hpack>(
                 .into_iter()
                 .find(|i| i.0 == SettingType::InitialWindowSize)
             {
-                let new_stream_value = window_value as i64 - connection_data.initial_window_size;
-                debug!("Set stream flow control to {new_stream_value}");
-                connection_data
-                    .stream_manager
-                    .broadcast_streams(Arc::new(StreamFrame::SetWindow(new_stream_value)))
-                    .await;
+                if window_value as i64 != connection_data.initial_window_size {
+                    let new_stream_value =
+                        window_value as i64 - connection_data.initial_window_size;
+                    debug!("Set stream flow control to {new_stream_value}");
+                    connection_data
+                        .stream_manager
+                        .broadcast_streams(Arc::new(StreamFrame::SetWindow(new_stream_value)))
+                        .await;
 
-                connection_data.set_initial_window_size(window_value);
+                    connection_data.set_initial_window_size(window_value);
+                }
             }
 
             if !setting_frame.is_ack {
-                // TODO: Handle settings
+                trace!("Sending ack");
                 send_setting_ack(&mut connection_data.stream)
                     .await
                     .map_err(FrameError::IOError)
@@ -140,6 +138,7 @@ async fn handle_frame<'hpack>(
                     frame.stream_id,
                     conf.clone(),
                     connection_data.hpack_encoder.clone(),
+                    connection_data.hpack_decoder.clone(),
                     connection_data.global_control_flow.clone(),
                 );
             connection_data
@@ -156,12 +155,13 @@ async fn handle_frame<'hpack>(
                     frame.stream_id,
                     conf.clone(),
                     connection_data.hpack_encoder.clone(),
+                    connection_data.hpack_decoder.clone(),
                     connection_data.global_control_flow.clone(),
                 );
             let headers_frame = frames::headers::Headers::receive_header_frame(
                 &mut connection_data.stream,
                 frame,
-                &mut connection_data.hpack_decoder,
+                &connection_data.hpack_decoder,
             )
             .await?;
 
@@ -198,6 +198,23 @@ async fn handle_frame<'hpack>(
 
             Ok(())
         }
+        FrameType::Continuation => {
+            let continuation = frames::continuation::Continuation::receive_continuation(
+                &mut connection_data.stream,
+                frame,
+            )
+            .await?;
+
+            connection_data
+                .stream_manager
+                .send_frame_to_stream(
+                    Arc::new(StreamFrame::Continuation(continuation)),
+                    frame.stream_id,
+                )
+                .await;
+
+            Ok(())
+        }
         _ => todo!(),
     }
 }
@@ -211,7 +228,7 @@ async fn do_connection_loop(
         stream,
         global_control_flow: Arc::new(AtomicU32::new(DEFAULT_WINDOW_SIZE)),
         hpack_encoder: Arc::new(Mutex::new(fluke_hpack::Encoder::new())),
-        hpack_decoder: fluke_hpack::Decoder::new(),
+        hpack_decoder: Arc::new(Mutex::new(fluke_hpack::Decoder::new())),
         stream_manager: StreamManager::default(),
         initial_window_size: DEFAULT_WINDOW_SIZE as i64,
     };
@@ -220,8 +237,10 @@ async fn do_connection_loop(
         // A connection thread can receive two kind of things:
         // 1. Some data to send from a stream
         // 2. A new frame to handle
+        trace!("Waiting for data from streams or peer");
         select! {
             data = connection_data.stream_manager.poll_data() => {
+                trace!("Stream data");
                 let Some(payload_bytes) = data.as_ref() else {
                     error!("Failed to retrieve data to send from stream!");
                     break Ok(());
@@ -235,6 +254,7 @@ async fn do_connection_loop(
                 let Ok(frame) = frame else {
                     return Err(frame.unwrap_err());
                 };
+                debug!("Frame header received: {frame:?}");
 
                 handle_frame(
                     conf,
@@ -243,7 +263,10 @@ async fn do_connection_loop(
                 )
                 .await?;
 
-                debug!("Frame header received: {frame:?}");
+            },
+            else => {
+                error!("Select has been cancelled. Is the connection closed?");
+                break Ok(());
             },
         };
     }

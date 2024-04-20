@@ -2,6 +2,7 @@ use std::{fs::File, io, net::SocketAddr, path::Path, sync::Arc};
 
 use clap::Parser;
 use connection::do_connection;
+use raptor_core::config;
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use tokio::{fs, net::TcpListener};
 use tokio_rustls::{
@@ -12,7 +13,6 @@ use tokio_rustls::{
     TlsAcceptor,
 };
 use tracing::{debug, error, info, info_span, warn, Instrument};
-use raptor_core::config;
 
 mod connection;
 mod http11;

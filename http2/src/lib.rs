@@ -1,6 +1,6 @@
 mod frames;
 mod server;
-mod utils;
 mod streams;
+mod utils;
 
 pub use server::run_connection;

@@ -18,7 +18,11 @@ pub(crate) async fn receive_n_bytes(
     let mut buffer = vec![0u8; count];
 
     while received_bytes_count < count {
-        received_bytes_count += stream.read(&mut buffer).await?;
+        received_bytes_count += stream.read(&mut buffer[received_bytes_count..]).await?;
+        assert!(
+            received_bytes_count <= count,
+            "too much bytes read: {received_bytes_count} > {count}"
+        );
     }
 
     Ok(buffer)

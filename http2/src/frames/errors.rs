@@ -28,6 +28,10 @@ pub(crate) enum FrameError {
     BadLengthWindowUpdate(u32),
     #[error("Max window update value: {0}")]
     WindowUpdateTooBig(u32),
+    #[error("Continuation on stream 0")]
+    ContinuationStreamZero,
+    #[error("Contination frame without header")]
+    ContinuationWithoutHeader,
     #[error("IO error: {0:?}")]
     IOError(io::Error),
 }

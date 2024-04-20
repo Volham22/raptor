@@ -17,8 +17,9 @@ use tracing::{debug, error, trace};
 use crate::{
     frames::{
         self,
+        continuation::Continuation,
         errors::FrameResult,
-        headers::Headers,
+        headers::{HeaderStatus, Headers},
         window_update::{WindowUpdate, DEFAULT_WINDOW_SIZE},
         Frame, FrameType,
     },
@@ -41,6 +42,7 @@ enum StreamState {
 pub(crate) enum StreamFrame {
     PushPromise,
     Header(Headers),
+    Continuation(Continuation),
     WindowUpdate(WindowUpdate),
     SetWindow(i64),
 }
@@ -54,6 +56,7 @@ pub struct Stream {
     flow_control: i64,
     global_flow_control: Arc<AtomicU32>,
     encoder: Arc<Mutex<fluke_hpack::Encoder<'static>>>,
+    decoder: Arc<Mutex<fluke_hpack::Decoder<'static>>>,
     conf: Arc<config::Config>,
     rx: Option<StreamReceiver>,
     tx: Option<StreamSender>,
@@ -67,11 +70,13 @@ impl Stream {
         flow_control: i64,
         global_flow_control: Arc<AtomicU32>,
         encoder: Arc<Mutex<fluke_hpack::Encoder<'static>>>,
+        decoder: Arc<Mutex<fluke_hpack::Decoder<'static>>>,
     ) -> Self {
         Self {
             id,
             state: StreamState::Idle,
             encoder,
+            decoder,
             conf,
             flow_control,
             global_flow_control,
@@ -87,7 +92,10 @@ impl Stream {
     }
 
     pub async fn do_stream_job(&mut self) -> FrameResult<()> {
+        let mut continuation_headers: Option<Headers> = None;
+
         loop {
+            trace!("Waiting data from main thread");
             let Some(frame) = self.rx.as_mut().unwrap().recv().await else {
                 trace!("Failed to receive data from connection. Is the connection closed?");
                 break;
@@ -99,56 +107,7 @@ impl Stream {
                 }
                 StreamFrame::Header(headers) if headers.has_end_headers() => {
                     debug!("Got frame headers: {headers:?}");
-                    let response = method_handlers::handle_request(headers, &self.conf).await;
-                    // TODO: Remove Bytes usage
-                    let headers = Headers::new(
-                        0x04 | if response.body.is_none() { 0x01 } else { 0x00 },
-                        [(
-                            b":status".to_vec(),
-                            response.code.to_string().as_bytes().to_vec(),
-                        )]
-                        .into_iter()
-                        .chain(
-                            response
-                                .headers
-                                .iter()
-                                .map(|(k, v)| (k.to_vec(), v.to_vec())),
-                        )
-                        .collect(),
-                    );
-
-                    if let Some(body) = response.body {
-                        // TODO: Remove `Bytes` and avoid copy
-                        self.to_send = Some((0, body.to_vec()));
-                    }
-
-                    let mut frame = Frame {
-                        frame_type: FrameType::Header,
-                        stream_id: self.id,
-                        ..Default::default()
-                    };
-
-                    trace!("Send header to the connection thread");
-                    if self
-                        .tx
-                        .as_ref()
-                        .unwrap()
-                        .send(
-                            utils::frame_to_bytes(&mut frame, headers, Some(self.encoder.clone()))
-                                .await
-                                .into(),
-                        )
-                        .await
-                        .is_err()
-                    {
-                        trace!("Failed to send data to main thread. Is the connection closed?");
-                    }
-
-                    if self.to_send.is_none() {
-                        break;
-                    }
-
-                    self.send_data_within_control_flow().await
+                    self.handle_header_frame(headers).await?;
                 }
                 StreamFrame::WindowUpdate(window_update) => {
                     self.flow_control += window_update.size_increment as i64;
@@ -161,7 +120,27 @@ impl Stream {
                         self.send_data_within_control_flow().await;
                     }
                 }
-                StreamFrame::Header(_) => todo!("Continuation frame"),
+                StreamFrame::Header(h) => {
+                    trace!("Received partial headers. Waiting continuation frame");
+                    continuation_headers = Some(h.to_owned());
+                }
+                StreamFrame::Continuation(c) => match continuation_headers.as_mut() {
+                    Some(continuation_frame) if c.has_end_headers() => {
+                        trace!("Final continuation frame received");
+
+                        continuation_frame.consume_contination(c);
+                        continuation_frame.decode_headers(&self.decoder).await?;
+                        self.handle_header_frame(continuation_frame).await?;
+                    }
+                    Some(continuation_frame) => {
+                        trace!("Intermediate continuation frame received. Consuming...");
+                        continuation_frame.consume_contination(c);
+                    }
+                    None => {
+                        error!("Continuation frame without header frame");
+                        return Err(frames::errors::FrameError::ContinuationWithoutHeader);
+                    }
+                },
                 StreamFrame::SetWindow(new_value) => {
                     debug!("Stream: {} local_flow_control: {new_value}", self.id);
                     self.flow_control = *new_value;
@@ -169,6 +148,61 @@ impl Stream {
             }
         }
 
+        Ok(())
+    }
+
+    async fn handle_header_frame(&mut self, headers: &Headers) -> FrameResult<()> {
+        let response = method_handlers::handle_request(headers, &self.conf).await;
+        let headers = Headers::new(
+            0x04 | if response.body.is_none() { 0x01 } else { 0x00 },
+            HeaderStatus::Complete(
+                [(
+                    b":status".to_vec(),
+                    response.code.to_string().as_bytes().to_vec(),
+                )]
+                .into_iter()
+                .chain(
+                    response
+                        .headers
+                        .iter()
+                        .map(|(k, v)| (k.to_vec(), v.to_vec())),
+                )
+                .collect(),
+            ),
+        );
+
+        if let Some(body) = response.body {
+            // TODO: Remove `Bytes` and avoid copy
+            self.to_send = Some((0, body.to_vec()));
+        }
+
+        let mut frame = Frame {
+            frame_type: FrameType::Header,
+            stream_id: self.id,
+            ..Default::default()
+        };
+
+        trace!("Send header to the connection thread");
+        if self
+            .tx
+            .as_ref()
+            .unwrap()
+            .send(
+                utils::frame_to_bytes(&mut frame, headers, Some(self.encoder.clone()))
+                    .await
+                    .into(),
+            )
+            .await
+            .is_err()
+        {
+            trace!("Failed to send data to main thread. Is the connection closed?");
+        }
+
+        if self.to_send.is_none() {
+            return Ok(());
+        }
+
+        self.send_data_within_control_flow().await;
         Ok(())
     }
 
@@ -259,6 +293,7 @@ impl StreamManager {
         id: u32,
         conf: Arc<config::Config>,
         encoder: Arc<Mutex<fluke_hpack::Encoder<'static>>>,
+        decoder: Arc<Mutex<fluke_hpack::Decoder<'static>>>,
         global_flow_control: Arc<AtomicU32>,
     ) {
         if self.streams.contains_key(&id) {
@@ -273,6 +308,7 @@ impl StreamManager {
             self.initial_stream_window_size,
             global_flow_control,
             encoder.clone(),
+            decoder.clone(),
         );
 
         stream.setup_channels(rx, self.stream_data_sender.clone());

@@ -2,44 +2,53 @@ use std::sync::Arc;
 
 use raptor_core::request::{self, HttpRequest};
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{trace, warn};
 
 use crate::{server::ConnectionStream, utils};
 
 use super::{
+    continuation::Continuation,
     errors::{FrameError, FrameResult},
     Frame, SerializeFrame,
 };
 
 pub(crate) type Header = (Vec<u8>, Vec<u8>);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub(crate) enum HeaderStatus {
+    Complete(Vec<Header>),
+    Partial(Vec<u8>),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct Headers {
     flags: u8,
-    pub headers: Vec<Header>,
+    pub headers: HeaderStatus,
 }
 
 impl Headers {
-    pub fn new(flags: u8, headers: Vec<Header>) -> Self {
+    pub fn new(flags: u8, headers: HeaderStatus) -> Self {
         Self { flags, headers }
     }
 
     pub async fn receive_header_frame(
         stream: &mut ConnectionStream,
         frame: &Frame,
-        hpack_decoder: &mut fluke_hpack::Decoder<'_>,
+        hpack_decoder: &Arc<Mutex<fluke_hpack::Decoder<'_>>>,
     ) -> FrameResult<Self> {
+        trace!("Receiving header frame");
         let frame_bytes = utils::receive_n_bytes(stream, frame.length as usize)
             .await
             .map_err(FrameError::IOError)?;
+        let mut hpack_decoder = hpack_decoder.lock().await;
 
-        Self::parse_header_frame(frame, hpack_decoder, &frame_bytes)
+        Self::parse_header_frame(frame, &mut hpack_decoder, frame_bytes)
     }
 
     pub(self) fn parse_header_frame(
         frame: &Frame,
         hpack_decoder: &mut fluke_hpack::Decoder<'_>,
-        frame_bytes: &[u8],
+        frame_bytes: Vec<u8>,
     ) -> FrameResult<Self> {
         if frame.flags & 0x08 > 0 {
             todo!("Padding isn't supported yet");
@@ -53,14 +62,41 @@ impl Headers {
 
         let payload_offset = if has_priority { 5usize } else { 0 };
 
-        let headers = hpack_decoder
-            .decode(&frame_bytes[payload_offset..frame.length as usize])
-            .map_err(FrameError::HpackDecodeError)?;
-
         Ok(Self {
             flags: frame.flags,
-            headers,
+            headers: if frame.flags & 0x04 > 0 {
+                HeaderStatus::Complete(
+                    hpack_decoder
+                        .decode(&frame_bytes[payload_offset..frame.length as usize])
+                        .map_err(FrameError::HpackDecodeError)?,
+                )
+            } else {
+                HeaderStatus::Partial(frame_bytes[payload_offset..].to_vec())
+            },
         })
+    }
+
+    pub(crate) fn consume_contination(&mut self, continuation: &Continuation) {
+        match &mut self.headers {
+            HeaderStatus::Partial(data) => {
+                data.extend_from_slice(&continuation.data);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub(crate) async fn decode_headers(
+        &mut self,
+        decoder: &Arc<Mutex<fluke_hpack::Decoder<'_>>>,
+    ) -> FrameResult<()> {
+        let HeaderStatus::Partial(data) = &self.headers else {
+            unreachable!();
+        };
+        let mut decoder = decoder.lock().await;
+        let headers = decoder.decode(data).map_err(FrameError::HpackDecodeError)?;
+        self.headers = HeaderStatus::Complete(headers);
+
+        Ok(())
     }
 
     #[inline]
@@ -77,8 +113,11 @@ impl Headers {
 
 impl HttpRequest for Headers {
     fn get_type(&self) -> Result<request::RequestType, request::RequestError> {
-        let method = self
-            .headers
+        let HeaderStatus::Complete(headers) = &self.headers else {
+            unreachable!("Reponse on partially received headers");
+        };
+
+        let method = headers
             .iter()
             .find(|(k, _)| k == b":method")
             .ok_or(request::RequestError::MalformedRequest)?;
@@ -93,8 +132,11 @@ impl HttpRequest for Headers {
     }
 
     fn get_uri(&self) -> Result<&[u8], request::RequestError> {
-        let (_, value) = self
-            .headers
+        let HeaderStatus::Complete(headers) = &self.headers else {
+            unreachable!("Reponse on partially received headers");
+        };
+
+        let (_, value) = headers
             .iter()
             .find(|(k, _)| k == b":path")
             .ok_or(request::RequestError::MalformedRequest)?;
@@ -111,12 +153,15 @@ impl SerializeFrame for Headers {
     ) -> Vec<u8> {
         let encoder_header = encoder.expect("must be provided for header");
         let mut encoder = encoder_header.lock().await;
+        let HeaderStatus::Complete(headers) = self.headers else {
+            unreachable!("Reponse on partially received headers");
+        };
 
         // Update frame
         frame.flags = self.flags;
 
         let encoded_bytes = encoder.encode(
-            self.headers
+            headers
                 .iter()
                 .map(|(k, v)| (k.as_slice(), v.as_slice()))
                 .collect::<Vec<(&[u8], &[u8])>>(),
@@ -130,7 +175,10 @@ impl SerializeFrame for Headers {
 
 #[cfg(test)]
 mod tests {
-    use crate::frames::{headers::Headers, Frame, FrameType, FRAME_HEADER_SIZE};
+    use crate::frames::{
+        headers::{HeaderStatus, Headers},
+        Frame, FrameType, FRAME_HEADER_SIZE,
+    };
 
     #[test]
     fn parse_correct_header_response() {
@@ -161,8 +209,11 @@ mod tests {
         ];
 
         let mut decoder = fluke_hpack::Decoder::new();
-        let result =
-            Headers::parse_header_frame(&FRAME, &mut decoder, &HEADER_BYTES[FRAME_HEADER_SIZE..]);
+        let result = Headers::parse_header_frame(
+            &FRAME,
+            &mut decoder,
+            HEADER_BYTES[FRAME_HEADER_SIZE..].to_vec(),
+        );
         let Ok(frame) = result else {
             panic!("Should be correct: {:?}", result.unwrap_err());
         };
@@ -170,9 +221,11 @@ mod tests {
         assert!(!frame.has_end_stream());
         assert!(frame.has_end_headers());
 
-        for ((key, value), (expected_key, expected_value)) in
-            frame.headers.iter().zip(expected_headers)
-        {
+        let HeaderStatus::Complete(headers) = frame.headers else {
+            panic!("Partial headers");
+        };
+
+        for ((key, value), (expected_key, expected_value)) in headers.iter().zip(expected_headers) {
             assert_eq!(
                 key,
                 &expected_key,
@@ -209,8 +262,11 @@ mod tests {
         ];
 
         let mut decoder = fluke_hpack::Decoder::new();
-        let result =
-            Headers::parse_header_frame(&FRAME, &mut decoder, &HEADER_BYTES[FRAME_HEADER_SIZE..]);
+        let result = Headers::parse_header_frame(
+            &FRAME,
+            &mut decoder,
+            HEADER_BYTES[FRAME_HEADER_SIZE..].to_vec(),
+        );
         let Ok(frame) = result else {
             panic!("Should be correct: {:?}", result.unwrap_err());
         };
@@ -218,9 +274,11 @@ mod tests {
         assert!(frame.has_end_stream());
         assert!(frame.has_end_headers());
 
-        for ((key, value), (expected_key, expected_value)) in
-            frame.headers.iter().zip(expected_headers)
-        {
+        let HeaderStatus::Complete(headers) = frame.headers else {
+            panic!("Partial headers");
+        };
+
+        for ((key, value), (expected_key, expected_value)) in headers.iter().zip(expected_headers) {
             assert_eq!(
                 key,
                 &expected_key,
