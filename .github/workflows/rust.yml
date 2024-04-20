@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-and-tests:
 
     runs-on: ubuntu-22.04
 
