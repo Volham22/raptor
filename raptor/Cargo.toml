@@ -1,0 +1,20 @@
+[package]
+name = "raptor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+httparse = "1.8.0"
+clap = { workspace = true }
+http2 = { path = "../http2" }
+raptor_core = { path = "../raptor-core" }
+rustls-pemfile = "2"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+format-bytes = "0.3.0"

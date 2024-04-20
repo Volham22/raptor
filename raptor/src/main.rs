@@ -2,48 +2,37 @@ use std::{fs::File, io, net::SocketAddr, path::Path, sync::Arc};
 
 use clap::Parser;
 use connection::do_connection;
-use rustls_pemfile::{read_all, rsa_private_keys};
+use raptor_core::config;
+use rustls_pemfile::{certs, pkcs8_private_keys};
 use tokio::{fs, net::TcpListener};
 use tokio_rustls::{
-    rustls::{self, Certificate, PrivateKey},
+    rustls::{
+        self,
+        pki_types::{CertificateDer, PrivateKeyDer},
+    },
     TlsAcceptor,
 };
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
-mod config;
 mod connection;
 mod http11;
-mod http2;
 mod logging;
-mod method_handlers;
-mod request;
-mod response;
 
-fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
+fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
     let mut cert_buffer = io::BufReader::new(File::open(path)?);
 
-    Ok(read_all(&mut cert_buffer)?
-        .into_iter()
-        .map(|c| match c {
-            rustls_pemfile::Item::X509Certificate(bytes) => Certificate(bytes),
-            _ => {
-                error!(
-                    "Invalid certificate found in pem file: {}",
-                    path.to_str().unwrap()
-                );
-                std::process::exit(1);
-            }
-        })
-        .collect())
+    certs(&mut cert_buffer).collect()
 }
 
-fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
-    let mut key_buffer = io::BufReader::new(File::open(path)?);
-
+fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
     // TODO: Allow all type of private key
-    rsa_private_keys(&mut key_buffer)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid key file"))
-        .map(|mut keys| keys.drain(..).map(PrivateKey).collect())
+    pkcs8_private_keys(&mut io::BufReader::new(File::open(path)?))
+        .next()
+        .ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid key file",
+        ))?
+        .map(Into::into)
 }
 
 #[tokio::main]
@@ -96,13 +85,12 @@ async fn main() -> io::Result<()> {
     let addr = SocketAddr::new(conf.ip, conf.port);
     debug!("Created sockaddr");
     let certs = load_certs(&conf.cert_path)?;
-    let mut keys = load_keys(&conf.key_path)?;
+    let key = load_keys(&conf.key_path)?;
     debug!("Loaded certs and private key");
 
     let mut config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(certs, keys.remove(0))
+        .with_single_cert(certs, key)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     // Allow http2 for ALPN negociation with the client

@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::request::{HttpRequest, RequestError, RequestType};
+use raptor_core::request::{HttpRequest, RequestError, RequestType};
 
 pub struct Request<'buf> {
     ty: RequestType,

@@ -1,6 +1,7 @@
-use std::{fmt::Write, io, sync::Arc};
+use std::{io, sync::Arc};
 
-use bytes::BytesMut;
+use format_bytes::write_bytes;
+use raptor_core::{config::Config, method_handlers::handle_request, response::Response};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -8,20 +9,20 @@ use tokio::{
 use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, event, info, trace, Level};
 
-use crate::{config::Config, http11, method_handlers::handle_request, response::Response};
+use crate::http11;
 
 async fn send_response(mut stream: TlsStream<TcpStream>, response: Response) -> io::Result<()> {
     const CRLF: &[u8; 2] = b"\r\n";
     event!(Level::TRACE, "Sending response");
 
-    let mut buffer = BytesMut::with_capacity(128);
-    buffer
-        .write_fmt(format_args!(
-            "HTTP/1.1 {} {}\r\n",
-            response.code,
-            response.get_code_string()
-        ))
-        .expect("Failed to format response buffer");
+    let mut buffer: [u8; 128] = [0; 128];
+    let mut slice = &mut buffer[..];
+    write_bytes!(
+        &mut slice,
+        b"HTTP/1.1 {} {}\r\n",
+        response.code,
+        response.get_code_bytes()
+    )?;
 
     stream.write_all(&buffer).await?;
 
@@ -46,11 +47,11 @@ async fn send_response(mut stream: TlsStream<TcpStream>, response: Response) -> 
 
 #[tracing::instrument(level = "info")]
 pub async fn do_http11(mut stream: TlsStream<TcpStream>, config: Arc<Config>) -> io::Result<()> {
-    let mut buffer = BytesMut::with_capacity(1024);
+    let mut buffer = [0u8; 1024];
     event!(Level::TRACE, "Started HTTP/1.1 handling");
 
     loop {
-        let read_size = stream.read_buf(&mut buffer).await?;
+        let read_size = stream.read(&mut buffer).await?;
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
 

@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use bytes::Bytes;
 use tokio::fs;
 use tracing::debug;
 
@@ -71,6 +70,6 @@ pub async fn handle_request<T: HttpRequest>(req: &T, conf: &Arc<Config>) -> Resp
     }
 }
 
-async fn handle_get(resolved_path: &Path) -> io::Result<Bytes> {
-    fs::read(resolved_path).await.map(Bytes::from)
+async fn handle_get(resolved_path: &Path) -> io::Result<Vec<u8>> {
+    fs::read(resolved_path).await
 }

@@ -1,0 +1,16 @@
+[package]
+name = "raptor_core"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+chrono = "0.4.26"
+mime_guess = "2.0.4"
+serde = {version = "1.0.185", features = ["derive"]}
+serde_yaml = "0.9.25"
