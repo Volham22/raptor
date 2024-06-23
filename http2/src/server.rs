@@ -219,7 +219,6 @@ async fn handle_frame(
     }
 }
 
-#[instrument]
 async fn do_connection_loop(
     stream: ConnectionStream,
     conf: &Arc<config::Config>,
@@ -274,7 +273,7 @@ async fn do_connection_loop(
 
 /// Run an HTTP/2 client connection. At this point the connection has already
 /// been accepted and http/2 has been negociated with the TLS ALPN extension
-#[instrument]
+#[instrument(name = "http2_connection")]
 pub async fn run_connection(
     mut stream: ConnectionStream,
     config: Arc<config::Config>,

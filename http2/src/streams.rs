@@ -218,12 +218,16 @@ impl Stream {
             frame_type: FrameType::Data,
             ..Default::default()
         };
+        let chunk_size = cmp::min(
+            cmp::min(
+                self.flow_control as usize,
+                self.global_flow_control.load(Ordering::Relaxed) as usize,
+            ),
+            // TODO: Support settings max frame size
+            frames::MAX_FRAME_SIZE,
+        );
 
-        for chunk in to_send.chunks(cmp::min(
-            self.flow_control as u32,
-            self.global_flow_control.load(Ordering::Relaxed),
-        ) as usize)
-        {
+        for chunk in to_send.chunks(chunk_size) {
             debug!(
                 "Local flow control: {} global flow control: {}",
                 self.flow_control,
