@@ -7,6 +7,7 @@ use self::errors::FrameError;
 /// 4.1 Frame format
 /// All frames begin with a fixed 9-octet header followed by a variable-length frame payload.
 pub(crate) const FRAME_HEADER_SIZE: usize = 9;
+pub(crate) const MAX_FRAME_SIZE: usize = 1 << 14; // 2**14 by default
 
 pub(crate) mod continuation;
 pub(crate) mod data;
