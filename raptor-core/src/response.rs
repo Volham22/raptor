@@ -139,3 +139,15 @@ impl Response {
         }
     }
 }
+
+impl From<Response> for http::Response<()> {
+    fn from(value: Response) -> Self {
+        let mut result = http::Response::builder().status(value.code);
+
+        for (k, v) in value.headers.into_iter() {
+            result = result.header(k, v);
+        }
+
+        result.body(()).expect("unreachable")
+    }
+}

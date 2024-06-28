@@ -10,6 +10,7 @@ clap = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
+http = {  workspace = true }
 chrono = "0.4.26"
 mime_guess = "2.0.4"
 serde = {version = "1.0.185", features = ["derive"]}
