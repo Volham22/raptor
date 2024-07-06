@@ -87,3 +87,72 @@ impl Config {
             .unwrap_or(path::PathBuf::from_str(DEFAULT_VALUE_DEFAULT_FILE).expect("unreachable"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::config::{Config, ConfigError};
+
+    #[tokio::test]
+    async fn test_bad_yaml() {
+        let err = Config::from_yaml_str("this is not yaml").await;
+        match err {
+            Err(ConfigError::BadYaml(_)) => (),
+            _ => panic!("should be bad yaml: {err:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_root_dir_is_file() {
+        let err = Config::from_yaml_str(
+            r#"
+ip: "127.0.0.1"
+port: 8000
+cert_path: "./localhost.pem"
+key_path: "./localhost-key.pem"
+root_dir: /proc/cpuinfo
+            "#,
+        )
+        .await;
+        match err {
+            Err(ConfigError::RootFolderIsAFile(_)) => (),
+            _ => panic!("wrong error: {err:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_root_path_is_not_absolute() {
+        let err = Config::from_yaml_str(
+            r#"
+ip: "127.0.0.1"
+port: 8000
+cert_path: "./localhost.pem"
+key_path: "./localhost-key.pem"
+root_dir: ./path/to/dir
+            "#,
+        )
+        .await;
+        match err {
+            Err(ConfigError::RootPathNotAbsolute(_)) => (),
+            _ => panic!("wrong error: {err:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_default_file_is_absolute() {
+        let err = Config::from_yaml_str(
+            r#"
+ip: "127.0.0.1"
+port: 8000
+cert_path: "./localhost.pem"
+key_path: "./localhost-key.pem"
+root_dir: /tmp
+default_file: /tmp/default.txt
+            "#,
+        )
+        .await;
+        match err {
+            Err(ConfigError::AbsoluteDefaultFile(_)) => (),
+            _ => panic!("wrong error: {err:?}"),
+        }
+    }
+}
